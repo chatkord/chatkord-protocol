@@ -57,7 +57,7 @@ the matched text.
 - Private terms (the names to keep out) are read at run time, never written to a file: the list items under
   `## Private terms` of `LAB.local.md`, looked up in the tree's root and else in `../chatkord-dev/`, or the
   `PRIVACY_TERMS` environment variable, which CI sets from a secret. With neither, the run says the terms did not run;
-  in CI it fails unless the workflow says the secret cannot be had (a fork's pull request).
+  in CI it fails unless the workflow says the secret cannot be had (a fork's pull request, or a job it is kept from).
 - The shapes are this repository's alone. A repository that runs the guard adds only allowances, each with its
   one-line reason: for the shapes in its `scripts/privacy/allow.gitleaks.toml` (top-level `[[allowlists]]`,
   `targetRules` naming a shape), joined to `.gitleaks.toml` at run time; for the script's own rules in its

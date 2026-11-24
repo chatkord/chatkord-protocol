@@ -417,7 +417,7 @@ def staged_files(root: Path = ROOT) -> list[str]:
 
 def terms_or_say() -> list[str] | None:
     """The private terms. Without them the run says so; in CI it fails, unless the workflow says the secret cannot
-    reach this run (a fork's pull request: PRIVACY_TERMS_UNAVAILABLE)."""
+    reach this run (PRIVACY_TERMS_UNAVAILABLE: a fork's pull request, or a job the secret is kept from)."""
     terms = term_lines()
     if terms is None:
         if os.environ.get("CI") and not os.environ.get("PRIVACY_TERMS_UNAVAILABLE"):
