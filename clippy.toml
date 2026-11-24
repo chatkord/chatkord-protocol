@@ -1,0 +1,26 @@
+# Every workspace's: clippy reads the nearest clippy.toml up the tree, so this one serves them all; an app or a crate
+# with rules of its own gets a clippy.toml written from this and its clippy.extra.toml (scripts/gate/clippy_configs.py).
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-print-in-tests = true
+# No crate is published, so the public API clippy would otherwise keep stable for others does not exist.
+avoid-breaking-exported-api = false
+
+# A log line is `report::note!`, whose fields are public facts by type, so a name, an address or a path cannot reach
+# one; a line only an operator's own terminal may show is `report::operator!`.
+disallowed-macros = [
+    { path = "tracing::trace", reason = "log with report::note!: its fields are public facts only" },
+    { path = "tracing::debug", reason = "log with report::note!: its fields are public facts only" },
+    { path = "tracing::info", reason = "log with report::note!: its fields are public facts only" },
+    { path = "tracing::warn", reason = "log with report::note!: its fields are public facts only" },
+    { path = "tracing::error", reason = "log with report::note!: its fields are public facts only" },
+    { path = "tracing::event", reason = "log with report::note!: its fields are public facts only" },
+    { path = "tracing::span", reason = "a span's fields bypass report::Public: log with report::note!" },
+    { path = "tracing::trace_span", reason = "a span's fields bypass report::Public: log with report::note!" },
+    { path = "tracing::debug_span", reason = "a span's fields bypass report::Public: log with report::note!" },
+    { path = "tracing::info_span", reason = "a span's fields bypass report::Public: log with report::note!" },
+    { path = "tracing::warn_span", reason = "a span's fields bypass report::Public: log with report::note!" },
+    { path = "tracing::error_span", reason = "a span's fields bypass report::Public: log with report::note!" },
+    { path = "tracing::instrument", reason = "an instrumented function records its arguments, which bypass report::Public" },
+]

@@ -1,0 +1,301 @@
+// Channels. One install is one server: there is no op to create, join or leave
+// a server, because signing in is joining it. A channel is text or voice, and always in a category;
+// a member holding `MANAGE_CHANNEL` makes, renames, moves and deletes channels and categories, and each session that
+// may see a channel is told each change of it by itself (`ChannelAdded`, `ChannelRenamed`, `ChannelMoved`,
+// `ChannelRemoved`), and every session each change of a category, each with the list's version after it.
+//
+// A channel the account may not see (no `CHANNEL_READ` there, `ChannelOverwrites`) is not listed, never told of, and
+// `NOT_FOUND` to every op that names it, as a channel nobody holds is.
+syntax = "proto3";
+
+package chatkord.v1;
+
+import "chatkord/v1/options.proto";
+
+// Renames a channel; answered `Ok`, and every session that may see it is told it (`ChannelRenamed`).
+message ChannelRename {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // As `ChannelSummary` names it; one no channel holds is `NOT_FOUND`.
+  string channel_id = 1;
+  // 1 to 64 characters once trimmed, with no control or text-direction character, or `INVALID_REQUEST`.
+  string name = 2;
+}
+
+// Makes a channel, last in its category; answered with the list after it. A server
+// holds at most 500, past which this is `INVALID_REQUEST`.
+message ChannelCreate {
+  option (sent_by) = CLIENT;
+  option (reply) = "ChannelsSummary";
+  // `TEXT` or `VOICE`, fixed for the channel's life; any other value is `INVALID_REQUEST`.
+  ChannelKind kind = 1;
+  // Bounded as `ChannelRename.name` is.
+  string name = 2;
+  // The category it goes in, by its id; empty or not an id is `INVALID_REQUEST`, one nobody holds `NOT_FOUND`.
+  string category_id = 3;
+  // Who sees or writes in it from its start, set in the same write as the channel: absent, as the roles give.
+  // `PRIVATE` denies `CHANNEL_READ` to the default role, `READ_ONLY` denies it `SEND_MESSAGE` (a text channel's alone,
+  // else `INVALID_REQUEST`); each allows that word to the maker by their own overwrite and to `role_id` when named.
+  // Set, it asks `MANAGE_ROLES` too, as `SetChannelOverwrite` would for each overwrite it makes.
+  optional ChannelAccess access = 4;
+  // A role allowed the word `access` takes from the default role, checked as `SetChannelOverwrite` checks a role;
+  // only with `access`, and never the default role itself, else `INVALID_REQUEST`.
+  optional string role_id = 5;
+}
+
+// Who sees or writes in a channel made with it (`ChannelCreate.access`).
+enum ChannelAccess {
+  // No access: never sent; refused when asked.
+  CHANNEL_ACCESS_UNSPECIFIED = 0;
+  // Seen only by who is allowed `CHANNEL_READ` in it, and the owner.
+  PRIVATE = 1;
+  // Read by everyone who sees it, written in only by who is allowed `SEND_MESSAGE` in it, and the owner.
+  READ_ONLY = 2;
+}
+
+// Deletes a channel; answered `Ok`. Everyone in its voice room is taken out (`VoiceClosed`).
+message ChannelDelete {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // As `ChannelSummary` names it; one no channel holds is `NOT_FOUND`.
+  string channel_id = 1;
+}
+
+// Asks for the channel list: every channel the account may see and every category, no word asked.
+message ChannelsList {
+  option (sent_by) = CLIENT;
+  option (reply) = "ChannelsSummary";
+}
+
+// What a channel is for, set when it is made; what each kind holds is one rule both ends read
+// (`proto::rules::Kind::holds`).
+enum ChannelKind {
+  // No channel's kind: the server never sends it, and a client reads it as a kind it does not know.
+  CHANNEL_KIND_UNSPECIFIED = 0;
+  // Messages alone: `VoiceJoin` names it as `NOT_FOUND`, and its `people` is always empty.
+  TEXT = 1;
+  // A voice room `VoiceJoin` enters, and messages beside the call.
+  VOICE = 2;
+}
+
+// A channel as the list shows it.
+message ChannelSummary {
+  // Opaque: the id the channel ops and `VoiceJoin` take.
+  string channel_id = 1;
+  // As `ChannelCreate` or the last `ChannelRename` set it, trimmed.
+  string name = 2;
+  // Fixed for the channel's life: no op changes it.
+  ChannelKind kind = 3;
+  // Its timeline's revision when the list was read, where a `CatchUp` of it starts.
+  uint64 revision = 4;
+  // Where it stands among the channels of its category, lowest first, ties by id; a new one comes last. Who is in a
+  // voice room is no fact of the list: `VoiceOccupancy` tells it.
+  int64 position = 5;
+  // Opaque: the timeline of its messages, which the chat ops take.
+  string timeline_id = 6;
+  // The category it is in, by its id: every channel is in one.
+  string category_id = 7;
+  // Hidden from the default role: its overwrite here denies `CHANNEL_READ`. Told again by `ChannelAccessChanged`.
+  bool private = 8;
+}
+
+// A category: a named group of channels, one level deep; every channel is in one.
+message CategorySummary {
+  // Opaque: the id the category ops take.
+  string category_id = 1;
+  // As `CategoryCreate` or the last `CategoryRename` set it, trimmed.
+  string name = 2;
+  // Where it stands among the categories, lowest first, ties by id.
+  int64 position = 3;
+}
+
+// The channel list: the answer to `ChannelsList` and `ChannelCreate`.
+message ChannelsSummary {
+  option (sent_by) = SERVER;
+  // Every channel the account may see, at most 500.
+  repeated ChannelSummary channels = 1;
+  // The list's version as read: it rises with each channel or category made, renamed, moved or deleted, and never
+  // with a message. A change told with a higher version applies to this list; one told with this version or lower is
+  // already in it. Versions told may skip: a change of a channel this account may not see is not told to it.
+  uint64 version = 2;
+  // This account's standing in each channel listed, read with the list.
+  repeated ChannelStanding standings = 3;
+  // Every category, at most 50.
+  repeated CategorySummary categories = 4;
+}
+
+// What this account may do and has read in one channel: its own, told only to its own sockets, in the list, after a
+// channel is made and on each `MarkRead`. After `StandingChanged` a client lists the channels again for theirs.
+message ChannelStanding {
+  option (sent_by) = SERVER;
+  // The channel, by its id.
+  string channel_id = 1;
+  // The grant words the account holds in it, each once, in a fixed order; a client passes over a word it does not
+  // know.
+  repeated string grants = 2;
+  // The revision of the channel's timeline this account has read through: a message placed after it is unread.
+  uint64 read = 3;
+  // The messages after `read` not written by this account, counted up to 100.
+  uint32 unread = 4;
+  // Of those, the ones that mention this account (`proto::notify::mentions_of`), counted up to 100: by name, by a role
+  // it holds unless it suppresses roles, by `@everyone`, or by `@here` while it was signed in, unless it suppresses
+  // those, or a reply to its message that mentions its author.
+  uint32 mentions = 5;
+}
+
+// A member in a voice room, as `VoiceOccupancy` and the room's announcements list them.
+message MemberSummary {
+  // Opaque: the id the ops about a member take, and `LoginAck.user_id` for the account itself.
+  string user_id = 1;
+  // The name others see: the chosen one, else the username.
+  string display_name = 2;
+  // The member muted their own microphone. This and the room states below are false when absent.
+  bool mic_muted = 3;
+  // The member hears nothing; their microphone is silent too, whatever `mic_muted` says.
+  bool deafened = 4;
+  // The member sends a screen share; a share's audio alone counts.
+  bool sharing = 5;
+  // An administrator muted this member for everyone: nobody hears them, whatever `mic_muted` says, which stays the
+  // member's own.
+  bool admin_muted = 6;
+  // Where the member stands in the roles' order now, as `LoginAck.place`: a change of their roles while in the room
+  // is shown.
+  optional uint32 place = 7;
+  // The colour the member picked, `#RRGGBB`; absent for none.
+  optional string colour = 8;
+  // The member sends their camera.
+  bool camera = 9;
+}
+
+// Moves a channel: into a category, just before a channel there, or last. `version` is the list's as the
+// mover read it; another is `LIST_CHANGED` and nothing moves. A category or channel nobody holds, or `before` not in
+// the category named, is `NOT_FOUND`. Answered `Ok`, and each session that may see it is told `ChannelMoved`.
+message ChannelMove {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // As `ChannelSummary` names it.
+  string channel_id = 1;
+  // The category it goes in, as `ChannelCreate.category_id` names it.
+  string category_id = 2;
+  // The channel it goes just before; absent, it goes last.
+  optional string before = 3;
+  // `ChannelsSummary.version` or the last change's, as the mover holds it.
+  uint64 version = 4;
+}
+
+// Makes a category, last in the order, gated by `MANAGE_CHANNEL` as every category op is. A server holds at most 50,
+// past which this is `INVALID_REQUEST`. Answered with the list after it, and every signed-in session is told
+// `CategoryAdded`.
+message CategoryCreate {
+  option (sent_by) = CLIENT;
+  option (reply) = "ChannelsSummary";
+  // Bounded as `ChannelRename.name` is.
+  string name = 1;
+}
+
+// Renames a category; answered `Ok`, and every signed-in session is told it (`CategoryRenamed`).
+message CategoryRename {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // As `CategorySummary` names it; one nobody holds is `NOT_FOUND`.
+  string category_id = 1;
+  // Bounded as `ChannelRename.name` is.
+  string name = 2;
+}
+
+// Deletes a category and its channels, and their messages, in the same write; everyone in a voice room of it is taken
+// out (`VoiceClosed`). Answered `Ok`, and each session that may see a channel of it is told `ChannelRemoved`, then
+// every signed-in session `CategoryRemoved`.
+message CategoryDelete {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // As `CategorySummary` names it; one nobody holds is `NOT_FOUND`.
+  string category_id = 1;
+}
+
+// Moves a category just before another, or last, as `ChannelMove` moves a channel; answered `Ok`, and every
+// signed-in session is told it (`CategoryMoved`).
+message CategoryMove {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // As `CategorySummary` names it.
+  string category_id = 1;
+  // The category it goes just before; absent, it goes last.
+  optional string before = 2;
+  // As `ChannelMove.version`.
+  uint64 version = 3;
+}
+
+// What a role's holders may do in one channel, beside what their roles give them everywhere.
+enum OverwriteState {
+  // No state: never sent, and refused when asked.
+  OVERWRITE_STATE_UNSPECIFIED = 0;
+  // The roles' own words decide: the overwrite is removed.
+  INHERIT = 1;
+  // The word is held in this channel.
+  ALLOW = 2;
+  // The word is not held in this channel.
+  DENY = 3;
+}
+
+// Sets one role's or one member's state for one word in one channel, gated by `MANAGE_CHANNEL` and `MANAGE_ROLES`:
+// only a role below the asker's place, never the owner role, a member below it or the asker themselves
+// (`NOT_AUTHORIZED`), and only a word the asker holds in that channel. A change after which the asker, not the owner,
+// would no longer hold `CHANNEL_READ` there is `NOT_AUTHORIZED` and changes nothing. The words are resolved the
+// default role's overwrite first, then the other roles' together, an allow over a deny, then the member's own, a deny
+// then an allow; the owner holds every word in every channel. A channel holds at most 100 members' overwrites, past
+// which a member's first is `INVALID_REQUEST`. A word no channel takes (`CHANNEL_READ`, `SEND_MESSAGE`,
+// `ADD_REACTIONS`, `ATTACH_FILES`, `MANAGE_MESSAGES`, `PIN_MESSAGES`, `MENTION_EVERYONE`, `START_VOICE`, `SHARE_CAMERA`,
+// `SHARE_SCREEN` are those it takes) is `INVALID_REQUEST`. Answered
+// `Ok`; each session whose standing there changed is told it, and one that may no longer see the channel is told it
+// gone and taken out of its voice room (`NOT_ALLOWED`).
+message SetChannelOverwrite {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // As `ChannelSummary` names it.
+  string channel_id = 1;
+  // Whose state it is; absent is `INVALID_REQUEST`.
+  oneof whom {
+    // A role, as `RoleEntry` names it.
+    string role_id = 2;
+    // A member, as `Person.user_id` names them.
+    string user_id = 3;
+  }
+  // One grant word, as `LoginAck.grants` spells it.
+  string word = 4;
+  // `INHERIT`, `ALLOW` or `DENY`.
+  OverwriteState state = 5;
+}
+
+// Asks for a channel's overwrites, gated as `SetChannelOverwrite` is.
+message ListChannelOverwrites {
+  option (sent_by) = CLIENT;
+  option (reply) = "ChannelOverwrites";
+  // As `ChannelSummary` names it.
+  string channel_id = 1;
+}
+
+// One role's or member's state for one word in a channel; a word inherited is not listed.
+message ChannelOverwrite {
+  // Whose state it is.
+  oneof whom {
+    // A role, as `RoleEntry` names it.
+    string role_id = 1;
+    // A member, as `Person.user_id` names them.
+    string user_id = 2;
+  }
+  // The grant word.
+  string word = 3;
+  // `ALLOW` or `DENY`.
+  OverwriteState state = 4;
+}
+
+// The answer to `ListChannelOverwrites`: at most one entry a role or member and word, the roles' in the roles' order
+// first, then the members' by id.
+message ChannelOverwrites {
+  option (sent_by) = SERVER;
+  // The channel, by its id.
+  string channel_id = 1;
+  // Every overwrite it holds.
+  repeated ChannelOverwrite entries = 2;
+}

@@ -1,0 +1,91 @@
+// The server's own emoji: a name and a picture, which a holder of `MANAGE_EMOJI` adds, renames and deletes, at most 250
+// a server. Every member lists them (`ListEmoji`) and is told each change in the store's order; a body names one by
+// a span (`Span.emoji_id`) and a reaction by its id (`ReactionKey.custom_id`).
+syntax = "proto3";
+
+package chatkord.v1;
+
+import "chatkord/v1/options.proto";
+
+// A custom emoji, as every member sees it; also the answer to `AddEmoji`.
+message Emoji {
+  option (sent_by) = SERVER;
+  // Opaque: the id the emoji ops, spans and reactions name.
+  string emoji_id = 1;
+  // 2 to 32 of `A`-`Z`, `a`-`z`, `0`-`9` and `_`, unique on the server whatever its case; written `:name:` in a body.
+  string name = 2;
+  // Its picture, a file's id (a 128-pixel square PNG), whose bytes travel over HTTP to every member.
+  string file_id = 3;
+  // Who added it, as `Person.user_id`; absent once their account is gone.
+  optional string made_by = 4;
+}
+
+// Adds an emoji, under `MANAGE_EMOJI`, answered with it (`Emoji`); every member is told it (`EmojiAdded`).
+message AddEmoji {
+  option (sent_by) = CLIENT;
+  option (reply) = "Emoji";
+  // As `Emoji.name`; out of shape is `INVALID_REQUEST`, a name the server holds in any case `ALREADY_EXISTS`, and a
+  // server's 251st emoji `INVALID_REQUEST`.
+  string name = 1;
+  // An upload of the asker's of kind `emoji` (`POST /v1/files?kind=emoji`) not yet used; any other is
+  // `INVALID_REQUEST`.
+  string file_id = 2;
+}
+
+// Renames an emoji, under `MANAGE_EMOJI`, answered `Ok`; every member is told it (`EmojiRenamed`).
+message RenameEmoji {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // As `Emoji.emoji_id`; one the server does not hold is `NOT_FOUND`.
+  string emoji_id = 1;
+  // As `AddEmoji.name`.
+  string name = 2;
+}
+
+// Deletes an emoji, under `MANAGE_EMOJI`, answered `Ok`: its reactions go with it, and a span naming it reads as its
+// text. Every member is told it (`EmojiRemoved`).
+message DeleteEmoji {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // As `Emoji.emoji_id`; one the server does not hold is `NOT_FOUND`.
+  string emoji_id = 1;
+}
+
+// Lists the server's emoji by id after `after`, answered `EmojiPage`, ending sooner where they would pass half a frame.
+// Any signed-in member may ask: every member uses them.
+message ListEmoji {
+  option (sent_by) = CLIENT;
+  option (reply) = "EmojiPage";
+  // The previous page's last `Emoji.emoji_id`; absent for the first page. One the store could not have made is
+  // `INVALID_REQUEST`.
+  optional string after = 1;
+}
+
+// The answer to `ListEmoji`: one page, by id.
+message EmojiPage {
+  option (sent_by) = SERVER;
+  // In id order.
+  repeated Emoji emoji = 1;
+  // More follow the last.
+  bool more = 2;
+}
+
+// An emoji was added; told to every signed-in session.
+message EmojiAdded {
+  // As every member sees it.
+  Emoji emoji = 1;
+}
+
+// An emoji was renamed; told to every signed-in session.
+message EmojiRenamed {
+  // As `Emoji.emoji_id`.
+  string emoji_id = 1;
+  // As `Emoji.name`.
+  string name = 2;
+}
+
+// An emoji was deleted, with its reactions; told to every signed-in session.
+message EmojiRemoved {
+  // As `Emoji.emoji_id`.
+  string emoji_id = 1;
+}

@@ -1,0 +1,461 @@
+// Who a session belongs to: a password sign-in once, then a long-lived token the client keeps in the OS keyring.
+syntax = "proto3";
+
+package chatkord.v1;
+
+import "chatkord/v1/options.proto";
+
+// Signs in by password, then by the token its `LoginAck` gave; a wrong proof is `UNAUTHENTICATED` and ends the socket,
+// counted against the address (and a wrong password against the name).
+message Login {
+  option (sent_by) = CLIENT;
+  option (reply) = "LoginAck";
+  // The username, in any ASCII case; a token's sign-in names the account the token is for. Empty or longer than 32
+  // bytes is `UNAUTHENTICATED`, as a wrong password is.
+  string identity = 1;
+
+  // The proof; absent is `UNAUTHENTICATED`.
+  oneof credential {
+    // A password: the session it opens comes back as `LoginAck.session_token`.
+    PasswordCredential password = 2;
+    // A token an earlier sign-in issued: its session is renewed for 30 days, and no new token is issued.
+    TokenCredential token = 3;
+  }
+}
+
+// Makes an account, with an invite and nothing else: the server is invite-only.
+// A wrong, spent or expired invite is one answer (`UNAUTHENTICATED`, the same as
+// a wrong password); a name that is taken is `ALREADY_EXISTS`, and only a holder
+// of a good invite learns that. On success the session is signed in and the
+// reply is `LoginAck`.
+message Register {
+  option (sent_by) = CLIENT;
+  option (reply) = "LoginAck";
+  // The username: 2 to 32 ASCII letters, digits, `.`, `_` or `-`, starting with a letter or digit. Kept as typed;
+  // two that differ only in ASCII case are one name.
+  string identity = 1;
+  // The name others see; absent, they see `identity` as typed.
+  optional string display_name = 2;
+  // At least 15 characters once Unicode-normalised (NFC), at most 1024 bytes.
+  string password = 3 [(secret) = true];
+  // The code `InviteCreated` gave; one not shaped as a code is a wrong invite.
+  string invite_code = 4 [(secret) = true];
+}
+
+// A sign-in's proof by password.
+message PasswordCredential {
+  // At most 1024 bytes, compared once Unicode-normalised (NFC); a longer one is `UNAUTHENTICATED`.
+  string password = 1 [(secret) = true];
+}
+
+// A sign-in's proof by the token a password sign-in or a registration issued.
+message TokenCredential {
+  // As `LoginAck.session_token` gave it: 43 characters of URL-safe base64; anything else is `UNAUTHENTICATED`.
+  // The server keeps only its digest.
+  string token = 1 [(secret) = true];
+}
+
+// The answer to a `Login` or `Register` that signed the session in: who the account is and what it may do.
+message LoginAck {
+  option (sent_by) = SERVER;
+  // Present only when this reply issued a new token.
+  optional string session_token = 1 [(secret) = true];
+  // The name others see: the chosen one, else the username as typed.
+  string display_name = 2;
+  // The account's username as it was typed when it was made (`Ada`), whatever case
+  // this sign-in typed; usernames compare without ASCII case.
+  string identity = 3;
+  // Where the account stands in the roles' order: the `position` of its highest role (`RoleEntry.position`; 0 is the
+  // owner role's, a lower number ranks higher). A client offers what may be done to a member or a role below it, and
+  // the server decides again. Absent reads as the bottom of the order.
+  optional uint32 place = 4;
+  // The password was a temporary one: this session may only change it (or sign out).
+  bool must_change_password = 5;
+  // The grant words the account's roles hold (`INVITE_MEMBER`, `SEND_MESSAGE`, ...), each once.
+  repeated string grants = 6;
+  // The account's own id, as `MemberSummary` names it, so a client finds itself in a
+  // voice room.
+  string user_id = 7;
+  // The colour the account picked, `#RRGGBB`; absent for none.
+  optional string colour = 8;
+}
+
+// Ends this session, proved by the session alone: it names no identity or token, so a client cannot end a session it
+// is not in. Answered with `Ok`, then the socket ends on `CLIENT_SHUTDOWN`; a session no longer live is
+// `UNAUTHENTICATED`.
+message SignOut {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+}
+
+// Changes the password and ends every other session of the account, their sockets on `PASSWORD_CHANGED`. The asking
+// session stays, unless a temporary password opened it (`ResetPassword`): that one ends on `CLIENT_SHUTDOWN`.
+// Proved by the session and `current`, so a copied token cannot replace the password; a wrong `current` is
+// `UNAUTHENTICATED`, under the sign-in's throttle. A password that cannot be one, or the one in force, is
+// `INVALID_REQUEST`, before any hashing. Answered with `Ok`.
+message ChangePassword {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // The new password: at least 15 characters once Unicode-normalised (NFC), at most 1024 bytes, and not the current
+  // one.
+  string password = 1 [(secret) = true];
+  // The account's current password: verified against the stored hash, then dropped.
+  string current = 2 [(secret) = true];
+}
+
+// Whether an invite still admits someone, asked before signing in as the opening's
+// only op; the server closes the socket after the answer. A wrong, spent, expired
+// or malformed code is one answer (`usable` absent) and counts against the address
+// like a wrong password; a working one is not spent.
+message InviteInfo {
+  option (sent_by) = CLIENT;
+  option (reply) = "InviteStanding";
+  // The code `InviteCreated` gave, as `Register.invite_code` takes it.
+  string code = 1 [(secret) = true];
+}
+
+// The answer to `InviteInfo`.
+message InviteStanding {
+  option (sent_by) = SERVER;
+  // Present only while the invite admits someone.
+  optional UsableInvite usable = 1;
+}
+
+// What a working invite gives whoever registers with it, so the client can say so before they choose a name.
+message UsableInvite {
+  // Seconds since the epoch.
+  int64 expires_at = 1;
+  // Registering with it grants the owner role.
+  bool owner = 2;
+}
+
+// Deletes the signed-in account, proved like `ChangePassword` by the session and
+// the current password (a wrong one is `UNAUTHENTICATED`, under the sign-in's
+// throttle). The server owner is `NOT_AUTHORIZED` until ownership has moved. The
+// asking socket ends on `CLIENT_SHUTDOWN`; the account's others on `ACCOUNT_DELETED`. A session a temporary password
+// opened is `NOT_AUTHORIZED`.
+message LeaveServer {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // The account's current password, checked as `ChangePassword.current` is.
+  string current = 1 [(secret) = true];
+  // Also delete every message the account wrote, each left a tombstone every device learns of; without it
+  // they stay, written by a former member.
+  bool delete_messages = 2;
+}
+
+// Makes an invite, gated by `INVITE_MEMBER`; one that grants a role also needs
+// `MANAGE_ROLES` and every word of that role, and none grants the owner role (`NOT_AUTHORIZED`): a server has one
+// owner, and ownership only moves. 1 to 100 uses, 1 to 30 days; a server keeps at most 100 invites live,
+// past which this is `INVALID_REQUEST`. A role id the store does not hold is
+// `NOT_FOUND`, one that cannot be a role's id `INVALID_REQUEST`. The note is the maker's own words (1 to 64 characters), never shown
+// to the person the invite admits.
+message CreateInvite {
+  option (sent_by) = CLIENT;
+  option (reply) = "InviteCreated";
+  // How many people may register with it.
+  uint32 uses = 1;
+  // How long it lives from now, in whole days.
+  uint32 days = 2;
+  // A role it grants beside the default one, by the id `ListRoles` gives; absent grants the default role alone.
+  optional string role_id = 3;
+  // Trimmed, with no control or text-direction character; absent for none.
+  optional string note = 4;
+}
+
+// The new invite's code, shown once: the server keeps only its digest.
+message InviteCreated {
+  option (sent_by) = SERVER;
+  // 43 characters of URL-safe base64, which `InviteInfo` and `Register` take.
+  string code = 1 [(secret) = true];
+  // Seconds since the epoch.
+  int64 expires_at = 2;
+}
+
+// The invites that still admit someone, gated by `INVITE_MEMBER`.
+message ListInvites {
+  option (sent_by) = CLIENT;
+  option (reply) = "Invites";
+}
+
+// A live invite: `uses` taken of `max_uses`, `expires_at` in seconds since the epoch.
+message InviteSummary {
+  // Opaque, and not the code: it names the invite to `RevokeInvite` and admits no one.
+  string invite_id = 1;
+  // How many people have registered with it.
+  uint32 uses = 2;
+  // How many it admits in all, as `CreateInvite.uses` set it.
+  uint32 max_uses = 3;
+  // When it stops admitting anyone, in seconds since the epoch.
+  int64 expires_at = 4;
+  // The role it grants beside the default one, by the id `ListRoles` gives; absent for none.
+  optional string role_id = 5;
+  // Its maker's note; absent for none.
+  optional string note = 6;
+}
+
+// The answer to `ListInvites`.
+message Invites {
+  option (sent_by) = SERVER;
+  // Oldest first, at most the 100 a server keeps live.
+  repeated InviteSummary entries = 1;
+}
+
+// Stops an invite, gated by `INVITE_MEMBER`; one that grants a role needs what
+// making it did. Answered with `Ok`, or `NOT_FOUND`.
+message RevokeInvite {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // As `InviteSummary` names it.
+  string invite_id = 1;
+}
+
+// Lists the members, gated by `MANAGE_MEMBERS`, banned ones included: at most 100 by id after `after` (an id from
+// an earlier page), and fewer when the page would pass half a frame. `next` is present while more follow.
+message ListMembers {
+  option (sent_by) = CLIENT;
+  option (reply) = "Members";
+  // The previous page's `Members.next`; absent for the first page.
+  optional string after = 1;
+}
+
+// A member as `ListMembers` lists them.
+message MemberEntry {
+  // Opaque: the id `MemberSummary` names and the ops about a member take.
+  string user_id = 1;
+  // The username as typed when it was made.
+  string handle = 2;
+  // The name others see: the chosen one, else the username.
+  string display_name = 3;
+  // Every role held, the default one included, by the id `ListRoles` gives, in the roles' order.
+  repeated string role_ids = 4;
+  // Where the member stands in the roles' order, as `LoginAck.place`.
+  optional uint32 place = 5;
+  // The grant words those roles hold, each once, as `LoginAck.grants`.
+  repeated string grants = 6;
+  // The colour the member picked, `#RRGGBB`; absent for none.
+  optional string colour = 7;
+  // An administrator banned the member (`SetBanned`): they cannot sign in until unbanned.
+  bool banned = 8;
+}
+
+// The answer to `ListMembers`: one page.
+message Members {
+  option (sent_by) = SERVER;
+  // In the server's order, which a client does not lean on.
+  repeated MemberEntry entries = 1;
+  // The last entry's `user_id`, for `ListMembers.after`; absent on the last page.
+  optional string next = 2;
+}
+
+// Lists the roles in their order, the ids the role ops, `SetRole` and `CreateInvite.role_id` take, what each is shown
+// as and the words it holds. Any signed-in member may ask, no word: every member sees each other's roles.
+message ListRoles {
+  option (sent_by) = CLIENT;
+  option (reply) = "Roles";
+}
+
+// A role as `ListRoles` lists it.
+message RoleEntry {
+  // Opaque: how every op names a role.
+  string role_id = 1;
+  // What it is shown as; two roles may share a name.
+  string name = 2;
+  // Every account holds it; it is neither given nor taken.
+  bool is_default = 3;
+  // The owner role, first in the order; it only moves (`TransferOwnership`).
+  bool is_owner = 4;
+  // Its place in the order: 0 for the owner role, the highest number for the default role, every other between; a
+  // lower number ranks higher, and a member with a role acts only on members and roles below it.
+  uint32 position = 5;
+  // The colour it is shown in, `#RRGGBB`; absent for none.
+  optional string colour = 6;
+  // The grant words it gives its holders, each once, in a fixed order; a client passes over a word it does not know.
+  repeated string grants = 7;
+}
+
+// The answer to `ListRoles`.
+message Roles {
+  option (sent_by) = SERVER;
+  // Every role, the default and owner ones included, in their order: the first ranks highest.
+  repeated RoleEntry entries = 1;
+}
+
+// Gives a member a role (`held`) or takes it, gated by `MANAGE_ROLES`; answered
+// with `Ok`, also when nothing changed. `NOT_AUTHORIZED` for the owner role, a role not below the asker's place, a
+// member not below it, and a role holding a word the asker does not hold. One's own roles and the default
+// role are `INVALID_REQUEST`; a member or role nobody holds is `NOT_FOUND`.
+// The member is told `StandingChanged`, and taken out of voice (`NOT_ALLOWED`)
+// when their roles no longer allow what they were doing there.
+message SetRole {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // The member, by the id `MemberEntry` and `MemberSummary` name.
+  string user_id = 1;
+  // An id `ListRoles` gives; one that cannot be a role's id is `INVALID_REQUEST`.
+  string role_id = 2;
+  // True gives the role, false takes it.
+  bool held = 3;
+}
+
+// Hands the owner role to another member, asked by the server owner and proved
+// by the current password (a wrong one is `UNAUTHENTICATED`, under the sign-in's
+// throttle). Anyone else is `NOT_AUTHORIZED`; oneself is `INVALID_REQUEST`; a
+// member nobody holds is `NOT_FOUND`. The old owner keeps the role just below the owner's, unless that is the default
+// role. Both accounts are told `StandingChanged`.
+message TransferOwnership {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // The member who becomes the owner, by the id `MemberEntry` and `MemberSummary` name.
+  string user_id = 1;
+  // The asking owner's current password, checked as `ChangePassword.current` is.
+  string current = 2 [(secret) = true];
+}
+
+// Ends every session of a member, gated by `MANAGE_MEMBERS`: their sockets close on
+// `KICKED` and leave their voice rooms. It takes no role away, so the member may
+// sign in again. `user_id` is the id other members see; one's own is
+// `INVALID_REQUEST`, one nobody holds is `NOT_FOUND`, and a member not below the asker's place is `NOT_AUTHORIZED`.
+message Kick {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // The member to sign out everywhere.
+  string user_id = 1;
+}
+
+// Gives a member a temporary password, gated by `MANAGE_MEMBERS`: every session they hold
+// ends on `PASSWORD_RESET`, and a sign-in with it may only change it. Resetting
+// a member not below the asker's place is `NOT_AUTHORIZED`; one's own is `INVALID_REQUEST`, and one nobody holds is
+// `NOT_FOUND`. `user_id` is the id other members see.
+message ResetPassword {
+  option (sent_by) = CLIENT;
+  option (reply) = "PasswordReset";
+  // The member whose password is replaced.
+  string user_id = 1;
+}
+
+// The temporary password, shown once to hand over: the server keeps only its hash.
+message PasswordReset {
+  option (sent_by) = SERVER;
+  // Four groups of five lower-case letters and digits joined by `-` (100 bits), with no `i`, `l`, `o` or `u` so it
+  // reads aloud plainly.
+  string temporary_password = 1 [(secret) = true];
+}
+
+// Sets the name others see for the signed-in account, and for no other: absent
+// goes back to the username. 1 to 64 printable characters, or `INVALID_REQUEST`.
+// Every signed-in session is told (`MemberRenamed`).
+message SetDisplayName {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // Kept and told trimmed of the whitespace around it.
+  optional string display_name = 1;
+}
+
+// Sets the colour others see the signed-in account in, and no other's: `#RRGGBB`
+// (any case, the `#` optional), or absent for none; anything else is
+// `INVALID_REQUEST`. Every signed-in session is told (`MemberRecoloured`).
+message SetProfileColour {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // Kept and told as `#RRGGBB` in upper case, however it was written.
+  optional string colour = 1;
+}
+
+// Makes a file of the signed-in account's own (its upload, `POST /v1/files?kind=profile-picture`) the picture others
+// see it by, and no other account's, or with none goes back to its initials. Every signed-in session is told
+// (`MemberPictured`).
+message SetProfilePicture {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // A file's id, 32 lower-case hex digits, else `INVALID_REQUEST`; a file of another kind, unknown, or not the
+  // asker's own upload is `NOT_FOUND`.
+  optional string picture = 1;
+}
+
+
+// Makes a role, gated by `MANAGE_ROLES`: holding no word, with no holder, just above the default role. A name that
+// cannot be one is `INVALID_REQUEST`, and so is a server's 251st role. Answered with every role after it, and every
+// signed-in session is told `RolesChanged`.
+message CreateRole {
+  option (sent_by) = CLIENT;
+  option (reply) = "Roles";
+  // 1 to 64 characters once trimmed, with no control or text-direction character; two roles may share one.
+  string name = 1;
+  // `#RRGGBB` in any case, the `#` optional; absent for none.
+  optional string colour = 2;
+}
+
+// Renames a role, gated by `MANAGE_ROLES`, as the role ops below are: the role must be below the asker's place
+// (`NOT_AUTHORIZED`), never the owner role. A role nobody holds is `NOT_FOUND`, an id that cannot be one
+// `INVALID_REQUEST`. Answered `Ok`, and every signed-in session is told `RolesChanged`, as for each role op below.
+message SetRoleName {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // As `RoleEntry` names it.
+  string role_id = 1;
+  // Bounded as `CreateRole.name` is.
+  string name = 2;
+}
+
+// Sets or clears a role's colour.
+message SetRoleColour {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // As `RoleEntry` names it.
+  string role_id = 1;
+  // As `CreateRole.colour`; absent clears it.
+  optional string colour = 2;
+}
+
+// Moves a role in the order: just above `before`, or just above the default role when absent. `before` must be below
+// the asker's place too, and is neither the default role nor the moved one (`INVALID_REQUEST`); the default role
+// itself never moves. Every member whose place changed is told `StandingChanged`.
+message MoveRole {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // As `RoleEntry` names it.
+  string role_id = 1;
+  // The role it goes just above, by its id; absent, it goes last before the default role.
+  optional string before = 2;
+}
+
+// Deletes a role: its holders lose it, and an invite that grants it is revoked. The default role is never deleted
+// (`INVALID_REQUEST`). Every holder is told `StandingChanged`, and taken out of voice (`NOT_ALLOWED`) when what is
+// left no longer allows what they were doing there.
+message DeleteRole {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // As `RoleEntry` names it.
+  string role_id = 1;
+}
+
+// Gives a role a grant word (`held`) or takes it: only a word the asker holds (`NOT_AUTHORIZED`), and a word this
+// server does not know is `INVALID_REQUEST`. Answered `Ok`, also when nothing changed. Every holder is told
+// `StandingChanged`, and taken out of voice when their words no longer allow what they were doing there.
+message SetRoleWord {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // As `RoleEntry` names it.
+  string role_id = 1;
+  // One grant word, as `LoginAck.grants` spells it.
+  string word = 2;
+  // True gives the word, false takes it.
+  bool held = 3;
+}
+
+// Bans a member (`banned`) or unbans them, gated by `MANAGE_MEMBERS` and proved by the asker's current password (a
+// wrong one is `UNAUTHENTICATED`, under the sign-in's throttle). A ban ends every session of the member on `BANNED`
+// and leaves their voice room; their account, roles and messages stay, and a sign-in with their password is told
+// `BANNED` until they are unbanned. One's own is `INVALID_REQUEST`, one nobody holds `NOT_FOUND`, and a member not
+// below the asker's place `NOT_AUTHORIZED`. Answered `Ok`, also when nothing changed.
+message SetBanned {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // The member, by the id `MemberEntry` and `MemberSummary` name.
+  string user_id = 1;
+  // True bans, false unbans.
+  bool banned = 2;
+  // The asker's current password, checked as `ChangePassword.current` is.
+  string current = 3 [(secret) = true];
+}

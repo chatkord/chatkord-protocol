@@ -1,0 +1,187 @@
+// What every plane needs before any op: the version, the acknowledgements, and the error and close enums. It imports
+// only the schema's own options.
+syntax = "proto3";
+
+package chatkord.v1;
+
+import "chatkord/v1/options.proto";
+
+// The protocol's version. An additive change bumps `minor`; a removal, renumbering or rename bumps `major`, to one
+// never used before (`wire/MAJORS`). A peer on another `major`, ahead or behind, ends the session with
+// `CloseReason.VERSION_MISMATCH`.
+message ProtoVersion {
+  // Changes when a peer of the old one could misread the new: both ends must agree on it.
+  uint32 major = 1;
+  // Grows with each additive change; a feature it brings is offered in `ServerHello.features`, never assumed.
+  uint32 minor = 2;
+}
+
+// Something a minor adds that a peer may rely on only when the server offers it (`ServerHello.features`). Each minor
+// that adds one adds its member here, named with the minor; a major's first minor adds none.
+enum Feature {
+  // No feature, or one this end does not know: never relied on.
+  FEATURE_UNSPECIFIED = 0;
+}
+
+// A part of the server an administrator may switch off (`SetServerSwitch`); every switch is on until one is set off.
+// While a switch is off, the ops it names are refused `NOT_AUTHORIZED` and what they stored is kept.
+enum Switch {
+  // No switch, or one this end does not know.
+  SWITCH_UNSPECIFIED = 0;
+  // Conversations: `OpenConversation`, `ListConversations`, `ConversationOpened`, and a conversation's timeline and
+  // `TimelineStanding`.
+  CONVERSATIONS = 1;
+  // Threads: `SendMessage.thread_of`, `FollowThread`, `ListFollowed` and `Message.thread`.
+  THREADS = 2;
+  // Link previews: `LinkPreview` on `SendMessage` and `EditMessage`, and `Message.preview`.
+  LINK_PREVIEWS = 3;
+  // Search: `Search`, `SearchPage`, `Found.file_ids` and `Found.in_body`.
+  SEARCH = 4;
+  // The welcome note: a joining member's arrival is written as a note.
+  WELCOME_NOTE = 5;
+}
+
+// The answer to an op whose success carries nothing else.
+message Ok {
+  option (sent_by) = SERVER;
+}
+
+// A counter the other end echoes back, so a connection that died without a close frame is told apart from a quiet
+// one.
+message Heartbeat {
+  option (sent_by) = EITHER;
+  // Chosen by the client; the server echoes it unchanged, so a reply is matched to its ask.
+  uint64 nonce = 1;
+}
+
+// Asks to be told again what this session missed. A client that signed in again after its connection was lost names
+// the last `Event.cursor` it was told: the events since are told again in order, then the room and voice occupancy
+// whole. One that could not keep up with what it was told, and dropped it, names none: it is told its room, its
+// standing, the server and every voice room's people whole. Either is answered `Resumed` once told; told whole, a
+// client asks for the channel list (`ChannelsList`), which is told by change, not whole.
+message Resume {
+  option (sent_by) = CLIENT;
+  option (reply) = "Resumed";
+  // As the server sent it, at most 64 bytes; one longer is refused `INVALID_REQUEST`, and so is a second on one socket,
+  // whose first already told what was missed. Absent, the state is told whole.
+  optional bytes cursor = 1;
+}
+
+// The answer to `Resume`, once what it tells has been told.
+message Resumed {
+  option (sent_by) = SERVER;
+  // The state was told whole: no cursor was named, or it could not be resumed from (another server process, past what
+  // is kept, or not this server's).
+  bool whole = 1;
+}
+
+// `ERROR_CODE_UNSPECIFIED` is what an absent code reads as; every real code is non-zero.
+enum ErrorCode {
+  // No code was sent, or one this end does not know.
+  ERROR_CODE_UNSPECIFIED = 0;
+  // The opening's major is not the server's; the session ends with `VERSION_MISMATCH`.
+  PROTO_VERSION_MISMATCH = 1;
+  // An op this socket may not send where it stands, or none this end knows.
+  UNKNOWN_OP = 2;
+  // The frame was not a binary `WireMessage` this end could decode, or was over a frame's size.
+  BAD_FRAME = 3;
+  // The sign-in did not stand: a wrong identity or password, or a token whose session is over (its `Close` says why).
+  UNAUTHENTICATED = 4;
+  // Signed in, but this account's grant words do not allow the op, or its rank does not reach the member it names.
+  NOT_AUTHORIZED = 5;
+  // A move named a version of the channel list that is no longer the server's: nothing moved, and the list is asked
+  // for again before another move.
+  LIST_CHANGED = 6;
+  // Asked more often than its bucket allows: the op is refused and the socket kept, until a client that keeps on is
+  // ended.
+  RATE_LIMITED = 7;
+  // The server has no room for another session, stopped hearing this socket, or its media worker failed or was late.
+  SERVER_UNAVAILABLE = 8;
+  // The server failed while answering (its store, for one); the ask may be tried again.
+  INTERNAL = 9;
+  // The channel (or other thing) asked about is not there, or not visible to
+  // this account: the two are one answer.
+  NOT_FOUND = 10;
+  // The request names something that cannot be, such as a channel name that is
+  // empty or too long.
+  INVALID_REQUEST = 11;
+  // This connection is already in a voice channel; it leaves first. The same
+  // account joining from another connection is moved instead (`MOVED`).
+  ALREADY_IN_VOICE = 12;
+  // The name asked for is taken.
+  ALREADY_EXISTS = 13;
+  // The server's disk is full: nothing new is kept until room is made.
+  STORE_FULL = 14;
+  // A voice join: the server knows no address to tell clients to send media to (`Hosting.public_address`), so no
+  // call could connect.
+  NO_VOICE_ADDRESS = 15;
+}
+
+// Why a session, a voice place or one stream ended, which the client says to the person and acts on.
+enum CloseReason {
+  // No reason was sent, or one this end does not know.
+  CLOSE_REASON_UNSPECIFIED = 0;
+  // Ended as asked or after a refusal that needs no other reason, such as an opening that did not stand.
+  NORMAL = 1;
+  // The two ends' majors differ; the client says which end to update.
+  VERSION_MISMATCH = 2;
+  // An administrator kicked this account; its sessions end and their tokens are dead.
+  KICKED = 3;
+  // The other end stopped being heard: a socket silent past its deadline, or a voice room that could not reach it.
+  UNREACHABLE = 4;
+  // The server failed in a way that ends the session; signing in again may work.
+  SERVER_ERROR = 5;
+  // The client asked to end this session: it signed out or ended its sessions, and the `Ok` was its last reply.
+  CLIENT_SHUTDOWN = 6;
+  // The reasons a session ends follow the `UNAUTHENTICATED` refusal, on a socket
+  // standing in it and on a sign-in with its token, and the token is dead.
+  // Signed out: on another of the account's devices everywhere, or a newer
+  // sign-in retired it at the account's cap.
+  SIGNED_OUT = 7;
+  // Nothing renewed the session before its expiry.
+  SESSION_EXPIRED = 8;
+  // The server is stopping. Nothing about the session changed: its token still
+  // signs in once the server is back.
+  SERVER_STOPPING = 9;
+  // A voice place only (`VoiceClosed`): this account joined voice from another
+  // connection, and an account has one place across the server.
+  MOVED = 10;
+  // The account's password was changed: every other session ends, and the one that changed it too when a
+  // temporary password had opened it.
+  PASSWORD_CHANGED = 11;
+  // An administrator, or the operator, reset the account's password.
+  PASSWORD_RESET = 12;
+  // The operator deleted the account.
+  ACCOUNT_DELETED = 13;
+  // A voice place (`VoiceClosed`), or one's own screen tracks (`ProducerClosed`): this account's
+  // roles no longer allow it.
+  NOT_ALLOWED = 14;
+  // A voice place only (`VoiceClosed`): the channel was deleted.
+  CHANNEL_DELETED = 15;
+  // A voice place only (`VoiceClosed`): an administrator took this member out of the room.
+  TAKEN_OUT = 16;
+  // Sent by a client only, in its own `Close`: it could not keep up with what it was told, and left.
+  FELL_BEHIND = 17;
+  // A voice place only (`VoiceClosed`): this member sent media past what the server carries for one
+  // member, for seconds on end.
+  OVER_RATE = 18;
+  // An administrator banned this account: its sessions end, and a sign-in with its password is told this until it is
+  // unbanned.
+  BANNED = 19;
+}
+
+// A refusal: an `Error` with `ack_of` answers that request alone; one without it speaks for the session. Its code is
+// its cause, which the client words; the server sends no sentence.
+message Error {
+  option (sent_by) = SERVER;
+  // Why it was refused, for the client's own decision and its words.
+  ErrorCode code = 1;
+}
+
+// Why a session ends; the WebSocket close code is derived from the reason, never sent beside it. A client sends one
+// as it leaves on its own, and the server ends the socket without a word back.
+message Close {
+  option (sent_by) = EITHER;
+  // The reason the client tells the person, and whether it may try again.
+  CloseReason reason = 1;
+}

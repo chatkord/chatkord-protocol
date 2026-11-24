@@ -1,0 +1,12 @@
+# BASIC, not STANDARD: STANDARD's enum-naming rules want members renamed, and a rename is a major change.
+version: v2
+lint:
+  use:
+    - BASIC
+breaking:
+  use:
+    - WIRE
+  # Removing a spare `reserved` run moves no peer's bytes, and WIRE would report it.
+  except:
+    - RESERVED_MESSAGE_NO_DELETE
+    - RESERVED_ENUM_NO_DELETE

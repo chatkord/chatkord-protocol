@@ -1,0 +1,4 @@
+# Permanent exceptions to scripts/privacy/guard.py's own rules: `path rule-id  # reason`. gitleaks' rules keep theirs
+# in .gitleaks.toml, a repository's own allowances for them in scripts/privacy/allow.gitleaks.toml. A path ending
+# in / covers the directory. A stale entry fails the gate, so this stays short.
+# Each repository that runs the guard keeps its own file at this path; this one has no entry.

@@ -1,0 +1,20 @@
+[package]
+name = "report"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "What a Chatkord log or debug report may hold: public facts only, by type"
+
+[dependencies]
+# The one derive: an error enum is public by its variants' names (derive/).
+report-derive = { path = "derive" }
+tracing = "0.1.44"
+# The ring is a layer, kept out of every other layer's filter by its own (`registry` is what a per-layer filter needs).
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry", "std"] }
+
+[dev-dependencies]
+# A test's subscriber is the same registry both ends build.
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry", "std", "fmt"] }
+
+[lints]
+workspace = true

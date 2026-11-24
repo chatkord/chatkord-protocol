@@ -1,0 +1,44 @@
+[package]
+name = "proto"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Generated Chatkord wire types (prost); wire/chatkord/v1 is the only truth"
+
+[dependencies]
+prost = "0.14.6"
+# A peer's mediasoup parameters are read once for both ends (`sdp::sfu_json`) as mediasoup's own types, from this one
+# release, which `proto::mediasoup_types` re-exports so no app names its own.
+mediasoup-types = "=0.10.0"
+serde = "1.0.229"
+serde_json = "1.0.154"
+# The op kinds wire/buf.gen.yaml derives on the generated op enum (`wire_message::Kind`).
+strum = { version = "0.28.0", features = ["derive"] }
+# The op kind derives `report::Public`, so a log note names its op (wire/buf.gen.yaml).
+report = { path = "../report" }
+# A chosen password compared with the common ones as it is hashed, NFC, on both ends (`rules::is_common`);
+# one version at both, MIT or Apache-2.0.
+unicode-normalization = "0.1.26"
+# A report's one-use id is zeroed when dropped (`files::ReportId`); the version both apps lock.
+zeroize = "1.9.1"
+
+[dev-dependencies]
+# Its own `every_op` for the decode-cost test, which a test binary reaches only through the feature.
+proto = { path = ".", features = ["testing"] }
+
+[features]
+# `envelope::every_op` and `fuzz`, for other crates' tests and the `seeds` example.
+testing = []
+# `ops::render`, which writes `gen/ops.rs`; the file itself is left out, so a schema change never stops the generator.
+codegen = []
+
+[[example]]
+name = "ops"
+required-features = ["codegen"]
+
+[[example]]
+name = "seeds"
+required-features = ["testing"]
+
+[lints]
+workspace = true

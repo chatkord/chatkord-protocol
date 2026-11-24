@@ -1,0 +1,143 @@
+// The server's members as every member sees them: who they are, how they are shown (which says whether they are
+// signed in) and the roles they hold, never a handle. The chat view names an author by it, the members list and a
+// person's popover show it; kept current by `PersonArrived`, `PersonLeft`, `MemberRenamed`, `MemberRecoloured`,
+// `MemberPictured` and `MemberRolesChanged`, each told to every signed-in session in the store's order, and by
+// `PresenceChanged`, told out of that order.
+syntax = "proto3";
+
+package chatkord.v1;
+
+import "chatkord/v1/options.proto";
+
+// Lists the server's members by id after `after`, at most 500 a page and fewer where they would pass half a frame. Any signed-in member may ask: being one is what it
+// lists. A client lists every page after signing in, and again after any `Resume` told whole.
+message ListPeople {
+  option (sent_by) = CLIENT;
+  option (reply) = "People";
+  // The previous page's `People.next`; absent for the first page. One the store could not have made is
+  // `INVALID_REQUEST`.
+  optional string after = 1;
+}
+
+// A member as every member sees them.
+message Person {
+  // Opaque: the id `MemberSummary`, a message's author and the ops about a member name.
+  string user_id = 1;
+  // The name others see: the chosen one, else the username; at most 64 characters.
+  string display_name = 2;
+  // The colour they picked, `#RRGGBB` in upper case; absent for none.
+  optional string colour = 3;
+  // Every role they hold, the default one included, by `RoleEntry.role_id`, in no promised order.
+  repeated string role_ids = 4;
+  // How others see them at the presence snapshot `People.presence` names: `STATUS_OFFLINE` in `PersonArrived`, and
+  // for a member signed in nowhere or invisible.
+  Status status = 5;
+  // The picture they chose, a file's id, 32 lower-case hex digits; absent for none.
+  optional string picture = 6;
+}
+
+// How a member is shown to every other member: never more than this, no time they were last seen or idle since.
+enum Status {
+  // Not said: a server not keeping the protocol, read as `STATUS_OFFLINE`.
+  STATUS_UNSPECIFIED = 0;
+  // Signed in on no device, or invisible.
+  STATUS_OFFLINE = 1;
+  // Signed in and about.
+  STATUS_ONLINE = 2;
+  // Away by their choice, or no input on any of their devices for `proto::notify::IDLE_EVERYWHERE` while in no voice
+  // place.
+  STATUS_AWAY = 3;
+  // Wants no alerts: their devices show no popup and play no chime; what is unread is still counted.
+  STATUS_DO_NOT_DISTURB = 4;
+}
+
+// What an account chooses to be shown as, kept for the account (not a device) until it changes, its end passes or the
+// server starts again, when it is `STATUS_CHOICE_ONLINE`.
+enum StatusChoice {
+  // Not a choice: `SetStatus` with it is `INVALID_REQUEST`.
+  STATUS_CHOICE_UNSPECIFIED = 0;
+  // Shown online while signed in, away while idle everywhere.
+  STATUS_CHOICE_ONLINE = 1;
+  // Shown away while signed in.
+  STATUS_CHOICE_AWAY = 2;
+  // Shown as not to be disturbed; the account's devices alert nothing.
+  STATUS_CHOICE_DO_NOT_DISTURB = 3;
+  // Shown offline to everyone else; the account still receives everything, `@here` included.
+  STATUS_CHOICE_INVISIBLE = 4;
+}
+
+// Chooses how the asker is shown, answered `Ok`; the account's sockets are told `StatusChosen` and every other member
+// the shown status at the next presence tick. No grant word: it acts only on the asker's own account. At most
+// `proto::rules::MAX_STATUS_CHANGES_PER_MINUTE` a minute (`RATE_LIMITED` past it).
+message SetStatus {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // Unspecified is `INVALID_REQUEST`.
+  StatusChoice choice = 1;
+  // When the choice ends and the account is shown online again, in seconds since the Unix epoch by the server's clock;
+  // absent until it is changed. Not after now and within `proto::rules::MAX_STATUS_FOR`, and absent for
+  // `STATUS_CHOICE_ONLINE`, else `INVALID_REQUEST`.
+  optional int64 until = 2;
+}
+
+// The account's own choice, told to its sockets alone: when one signs in, when the choice changes, and when its end
+// passes.
+message StatusChosen {
+  // As `SetStatus.choice`; `STATUS_CHOICE_ONLINE` when none was made.
+  StatusChoice choice = 1;
+  // As `SetStatus.until`.
+  optional int64 until = 2;
+}
+
+// The answer to `ListPeople`: one page, by id.
+message People {
+  option (sent_by) = SERVER;
+  // At most 500, in id order.
+  repeated Person entries = 1;
+  // The last entry's `user_id`, for `ListPeople.after`; absent on the last page.
+  optional string next = 2;
+  // The generation of the presence snapshot each entry's `status` was read at: a `PresenceChanged` of a later
+  // generation is newer for the members it names, one of this or an earlier generation is not.
+  uint64 presence = 3;
+}
+
+// Someone became a member; told to every signed-in session.
+message PersonArrived {
+  // As they are shown.
+  Person person = 1;
+}
+
+// Someone is no longer a member: their account is gone, their messages stay with a former author of their own; told
+// to every signed-in session.
+message PersonLeft {
+  // As `Person.user_id`.
+  string user_id = 1;
+}
+
+// The roles a member holds changed: given, taken, or the server's ownership moved; told to every signed-in session.
+message MemberRolesChanged {
+  // As `Person.user_id`.
+  string user_id = 1;
+  // As `Person.role_ids`, whole.
+  repeated string role_ids = 2;
+}
+
+// Who changed how they are shown since the snapshot before, signing in on a first device or out of a last one
+// included: the server's fact from its signed-in sockets and each account's choice, told to every signed-in session
+// at most once a tick (5 s), out of the store's order (no cursor); a tick's changes too many for a frame come as
+// several of one generation. A member came and gone within a tick is in none.
+message PresenceChanged {
+  // The snapshot's generation, rising by one a tick that changed anything, from 1 at the server's start.
+  uint64 generation = 1;
+  // Each member whose shown status changed since the snapshot before, whatever between: `STATUS_OFFLINE` for one
+  // signed out of every device or gone invisible, another status for one signed in.
+  repeated Shown shown = 2;
+}
+
+// One member's shown status in `PresenceChanged`.
+message Shown {
+  // As `Person.user_id`.
+  string user_id = 1;
+  // Never `STATUS_UNSPECIFIED`.
+  Status status = 2;
+}

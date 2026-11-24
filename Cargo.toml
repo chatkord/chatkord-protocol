@@ -1,0 +1,51 @@
+[workspace]
+resolver = "3"
+members = ["proto", "report", "report/derive"]
+# The fuzz targets are cargo-fuzz's own workspace (fuzz/Cargo.toml).
+exclude = ["fuzz"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# The one owner of the lints every Chatkord workspace states; `gate:lints` holds each app's table equal to this one
+# (scripts/gate/lints.py), since cargo shares no table across workspaces.
+[workspace.lints.rust]
+missing_docs = "warn"
+unnameable_types = "warn"
+# cargo-fuzz builds every crate with `--cfg fuzzing` (fuzz/).
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
+unsafe_op_in_unsafe_fn = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+undocumented_unsafe_blocks = "warn"
+allow_attributes_without_reason = "warn"
+todo = "warn"
+unimplemented = "warn"
+unreachable = "warn"
+dbg_macro = "warn"
+exit = "warn"
+mem_forget = "warn"
+large_futures = "warn"
+large_stack_arrays = "warn"
+unnecessary_safety_comment = "warn"
+string_slice = "warn"
+needless_pass_by_value = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+borrow_as_ptr = "warn"
+ptr_as_ptr = "warn"
+ptr_cast_constness = "warn"
+as_ptr_cast_mut = "warn"
+multiple_unsafe_ops_per_block = "warn"
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+cast_possible_wrap = "warn"
+cast_lossless = "warn"
+allow_attributes = "warn"

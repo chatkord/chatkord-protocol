@@ -1,0 +1,235 @@
+// The voice plane: one voice place per account, joined from one socket. Media goes over mediasoup's transports, whose
+// parameters travel as mediasoup's own bounded JSON in `bytes` fields; there is no SDP on the wire.
+syntax = "proto3";
+
+package chatkord.v1;
+
+import "chatkord/v1/options.proto";
+
+import "chatkord/v1/channel.proto";
+
+// A track is (member, kind): a member's microphone, screen, the screen's own sound and camera mute and fail apart.
+enum TrackKind {
+  // Absent or unknown: an op naming it is `INVALID_REQUEST`, and the server never sends it.
+  TRACK_KIND_UNSPECIFIED = 0;
+  // Audio, produced under `START_VOICE` alone; paused on the server while its member is muted or deafened.
+  MICROPHONE = 1;
+  // The shared screen's picture, produced under `SHARE_SCREEN` as well (`NOT_AUTHORIZED`); never paused.
+  SCREEN_VIDEO = 2;
+  // The shared screen's own sound, produced under `SHARE_SCREEN` as well; paused while an administrator holds its
+  // member muted.
+  SCREEN_AUDIO = 3;
+  // The member's camera, produced under `SHARE_CAMERA` as well (`NOT_AUTHORIZED`); never paused.
+  CAMERA = 4;
+}
+
+// `mic_muted` and `deafened` are the state the place starts in, so nobody is ever
+// shown unmuted for a moment.
+message VoiceJoin {
+  option (sent_by) = CLIENT;
+  option (reply) = "VoiceState";
+  // A voice channel's id; a text channel and an unknown id are the same `NOT_FOUND`. Asked
+  // under `START_VOICE`; a connection already in voice is `ALREADY_IN_VOICE`. No call is refused for its size.
+  string channel_id = 1;
+  // The member's own mute. An account an administrator holds muted is paused whatever this says.
+  bool mic_muted = 2;
+  // The place hears nothing, and its microphone is paused as if muted.
+  bool deafened = 3;
+}
+
+// Leaves this account's voice place.
+message VoiceLeave {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+}
+
+// This place's own state, whole. A muted or deafened member's microphone producer is
+// paused on the server, and the room is told with `MemberState`. Answered with `Ok`.
+message VoiceSetState {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // The member's own mute, theirs to change while an administrator holds them muted too: the hold pauses the
+  // microphone whatever this says.
+  bool mic_muted = 1;
+  // The member hears nothing: their client stops playing, and the server pauses their microphone as if muted.
+  bool deafened = 2;
+}
+
+// An administrator mutes a member for everyone (`muted`), or lifts that (`!muted`). Nobody hears the member wherever
+// they join until it is lifted, whatever their own mute; the hold and their own mute are two facts, and lifting the
+// hold leaves their own as they set it.
+// Only for a member in voice, or to lift one who left. Answered with `Ok`.
+message VoiceMuteMember {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // The member as others see them (`MemberSummary.user_id`): unknown is `NOT_FOUND`, the asker `INVALID_REQUEST`, and
+  // one the asker may not manage (the owner; an administrator, unless the asker is the owner) `NOT_AUTHORIZED`.
+  string user_id = 1;
+  // True mutes; false lifts the mute, for a member in voice or not.
+  bool muted = 2;
+}
+
+// An administrator takes a member out of the voice room they are in; the member is told with
+// `CloseReason.TAKEN_OUT` and may join again. Answered with `Ok`.
+message VoiceTakeOut {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // Named and checked as `VoiceMuteMember.user_id` is; a member in no voice room is `INVALID_REQUEST`.
+  string user_id = 1;
+}
+
+// Starts one track. The session is the connection's own, so none is named.
+// `rtp_parameters` is mediasoup's RtpParameters as JSON, at most 16 KiB; the
+// server parses it into mediasoup's own types and refuses what does not parse.
+message VoiceProduce {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // At most one live track of each kind per place; a second is `INVALID_REQUEST`. A place's produces, stops and state
+  // changes share one budget, 8 at once and 4 a second after (`RATE_LIMITED`).
+  TrackKind kind = 1;
+  // Its codecs are all audio or all video, as `kind` is. Its CNAME and each codec's format parameters (at most 32) are
+  // tokens another member's SDP may carry: 1 to 64 bytes of `[A-Za-z0-9+/=_.-]`.
+  bytes rtp_parameters = 2;
+}
+
+// Ends one track; the others carry on.
+message VoiceStop {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // Answered with `Ok` whether or not the place had a live track of this kind.
+  TrackKind kind = 1;
+}
+
+// Takes one track of another member in the same room. The stream is named by
+// the member and the kind, never by a producer id the server made. The
+// capabilities are mediasoup's RtpCapabilities as JSON, at most 16 KiB. The
+// reply is `ConsumerState`, paused: `VoiceResume` starts it once the client's
+// side is built.
+message VoiceConsume {
+  option (sent_by) = CLIENT;
+  option (reply) = "ConsumerState";
+  // Another member of the asker's room, as others see them; the asker's own id, or a track that is not live, is
+  // `NOT_FOUND`. Asked under `CHANNEL_READ`.
+  string user_id = 1;
+  // A track the asker takes already is `INVALID_REQUEST`; a server holding all the consumers it can,
+  // `SERVER_UNAVAILABLE`.
+  TrackKind kind = 2;
+  // What the asker can receive (the client sends back `SfuOffer.router_rtp`); ones that cannot receive the stream are
+  // `INVALID_REQUEST`.
+  bytes rtp_capabilities = 3;
+}
+
+// Starts a consumer `VoiceConsume` made paused, once the client's side of it is built.
+message VoiceResume {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // The member `VoiceConsume` named; no consumer of that track is `NOT_FOUND`, and a media worker that did not start it
+  // `SERVER_UNAVAILABLE`.
+  string user_id = 1;
+  // The track `VoiceConsume` took.
+  TrackKind kind = 2;
+}
+
+// Holds a consumer `VoiceResume` started: its stream stops coming, and the consumer stays, until a `VoiceResume` starts
+// it again with a key frame. A viewer whose window shows the stream nowhere pauses it.
+message VoicePause {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // The member `VoiceConsume` named; no consumer of that track is `NOT_FOUND`, and a media worker that did not pause it
+  // `SERVER_UNAVAILABLE`.
+  string user_id = 1;
+  // The track `VoiceConsume` took.
+  TrackKind kind = 2;
+}
+
+// Stops taking one track of another member: the asker's own consumer of it
+// ends, so a later `VoiceConsume` of the same track takes it anew. Answered with `Ok` whether or not one was taken, as `VoiceStop` is.
+message VoiceRelease {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // The member `VoiceConsume` named.
+  string user_id = 1;
+  // The track `VoiceConsume` took; the member's stream of it carries on for everyone else.
+  TrackKind kind = 2;
+}
+
+// How to reach one of the member's transports: mediasoup's own JSON, each field at most 16 KiB.
+message SfuOffer {
+  // The member's transport: ICE parameters, candidates and DTLS parameters.
+  bytes transport = 1;
+  // The router's RTP capabilities.
+  bytes router_rtp = 2;
+}
+
+// Which of a member's two transports a message is about: it sends over one and receives over the other.
+enum SfuLane {
+  // Absent or unknown: an `SfuAnswer` naming it is `INVALID_REQUEST`.
+  SFU_LANE_UNSPECIFIED = 0;
+  // The transport the member's own tracks go out over (`VoiceState.send`).
+  SEND = 1;
+  // The transport every stream the member takes arrives over (`VoiceState.receive`).
+  RECEIVE = 2;
+}
+
+// The client's DTLS parameters, which connect one of its transports.
+message SfuAnswer {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // mediasoup's DtlsParameters as JSON (the role and fingerprints), at most 16 KiB; what does not parse is
+  // `INVALID_REQUEST`.
+  bytes dtls = 1;
+  // The transport it connects, once each: a second answer for one is `INVALID_REQUEST`. Answered with `Ok`.
+  SfuLane lane = 2;
+}
+
+// Asks for new ICE credentials on one of the member's transports, whose route the client lost: it then checks the
+// route again under them, its DTLS session kept. Answered with `SfuIce`. Outside a voice place, or naming
+// `SFU_LANE_UNSPECIFIED`, it is `INVALID_REQUEST`; past the place's rate of changes, `RATE_LIMITED`.
+message SfuRestartIce {
+  option (sent_by) = CLIENT;
+  option (reply) = "SfuIce";
+  // The transport whose ICE starts again.
+  SfuLane lane = 1;
+}
+
+// The answer to `SfuRestartIce`. The candidates and DTLS parameters are those `VoiceState` gave.
+message SfuIce {
+  option (sent_by) = SERVER;
+  // The transport's new ICE username fragment and password: mediasoup's IceParameters as JSON, at most 16 KiB.
+  bytes ice_parameters = 1;
+}
+
+// A consumer made for the client, the answer to its `VoiceConsume`: mediasoup's
+// parameters for it as JSON (its id, the producer's id, the kind and the RTP
+// parameters to receive with). It ends when the producer does.
+message ConsumerState {
+  option (sent_by) = SERVER;
+  // One JSON object of mediasoup's names, `{id, producerId, kind, rtpParameters}`, at most 16 KiB.
+  bytes consumer = 1;
+}
+
+// One member's one live track.
+message StreamRef {
+  // The producing member, as others see them.
+  string user_id = 1;
+  // Never `TRACK_KIND_UNSPECIFIED`.
+  TrackKind kind = 2;
+}
+
+// The voice room a join entered: who is in it, what streams it has, and how to reach the member's transports.
+message VoiceState {
+  option (sent_by) = SERVER;
+  // The channel joined, spelled as every later event about this room spells it.
+  string channel_id = 1;
+  // Everyone in the room now, the joiner included, each with their state; a joiner held muted shows `admin_muted`.
+  repeated MemberSummary participants = 2;
+  // The streams already live in the room, so a newcomer need not guess them from
+  // later events.
+  repeated StreamRef streams = 3;
+  // Present in the reply to a join: how to reach this member's two transports.
+  // Tracks the member produces go over `send`, and every stream the member takes
+  // arrives over `receive`; each is connected once, by an `SfuAnswer` naming it.
+  SfuOffer send = 4;
+  // Present beside `send`, with the same `router_rtp`; connected by an `SfuAnswer` naming `RECEIVE`.
+  SfuOffer receive = 5;
+}

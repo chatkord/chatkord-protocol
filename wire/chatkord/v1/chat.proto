@@ -1,0 +1,564 @@
+// Messages in a timeline: one stream of messages, which a channel of either kind owns (`ChannelSummary.timeline_id`), a
+// conversation (`Conversation.timeline_id`) or a thread of a channel's message (`ThreadSummary.timeline_id`).
+// A timeline's revision rises with every change to a message of it, and a message carries the revision of its last
+// change, so a client that keeps the higher of two copies never keeps a stale one. Sending, editing and deleting one's
+// own needs `SEND_MESSAGE`; deleting another's, `MANAGE_MESSAGES`; reading a page, the changes or the pins,
+// `CHANNEL_READ`; reacting, `ADD_REACTIONS`; attaching files, `ATTACH_FILES`; pinning, `PIN_MESSAGES`; a span naming
+// `@everyone`, `@here` or a role, `MENTION_EVERYONE`. A body's formatting is the markdown kept in its text; spans name
+// only what needs an id, and links. A thread asks the words of the channel its root is in; a conversation gives its
+// members `CHANNEL_READ`, `SEND_MESSAGE`, `ATTACH_FILES` and `ADD_REACTIONS` and no other word, whatever their roles
+// hold, and no one else reads it: a member of the server who is not one of its members is told `NOT_FOUND`. A
+// conversation whose other member is gone (left or banned) stays readable and takes no `SEND_MESSAGE`,
+// `ATTACH_FILES` or `ADD_REACTIONS`: sending is `NOT_AUTHORIZED`. A conversation holds no pin, and a span in it names
+// only a member, an emoji, a link or a channel the sender sees
+// (`INVALID_REQUEST` otherwise); a reader who cannot see that channel reads the mark's text alone. A message may carry one link preview, which its
+// sender's client made from the page its link names and the server only keeps and relays (`LinkPreview`).
+syntax = "proto3";
+
+package chatkord.v1;
+
+import "chatkord/v1/options.proto";
+
+// A message as every member who may read its timeline sees it.
+message Message {
+  option (sent_by) = SERVER;
+  // Opaque; the edit, delete and history ops take it.
+  string message_id = 1;
+  // The timeline it is in.
+  string timeline_id = 2;
+  // Who wrote it: a member, an account that is gone, or an app.
+  oneof author {
+    // As others see them (`LoginAck.user_id`).
+    string user_id = 3;
+    // A writer whose account is gone: one per account, never a member's id, never shared by two leavers.
+    string former_author = 4;
+    // A post by an incoming webhook.
+    App app = 5;
+  }
+  // Its order in the timeline: a later message has a greater place.
+  uint64 place = 6;
+  // The timeline's revision at its last change: of two copies, the one with the higher revision is the message now.
+  uint64 revision = 7;
+  // Its text; absent once deleted, when its place, author and time stay.
+  optional string body = 8;
+  // When it was sent, in seconds since the epoch.
+  int64 created_at = 9;
+  // When it was last edited, or deleted; absent if never.
+  optional int64 edited_at = 10;
+  // What its body names, as `SendMessage.spans`; none once deleted.
+  repeated Span spans = 11;
+  // The files sent with it, in the order sent, at most 10; none once deleted.
+  repeated Attachment attachments = 12;
+  // The message it answers; absent for none.
+  Reply reply = 13;
+  // A reply that mentions the author of the message it answers (`SendMessage.mention_author`).
+  bool mention_author = 14;
+  // Each distinct emoji reacted with, at most 20, in the order first reacted.
+  repeated Reaction reactions = 15;
+  // The asker's own reactions, of `reactions`: filled only in an answer to the asker, never in what others are told.
+  repeated ReactionKey mine = 16;
+  // When it was pinned, in seconds since the epoch; absent if not pinned.
+  optional int64 pinned_at = 17;
+  // The thread of this message, once one was started; absent for none. A reply to the thread raises the root's
+  // `revision` in its own timeline, so a catch-up carries the root once however many replies came.
+  optional ThreadSummary thread = 18;
+  // The preview of the link its body holds, as its sender sent it; absent for none, and once deleted.
+  optional LinkCard preview = 19;
+}
+
+// The author of a post an incoming webhook made: the name it posted under and the webhook's own name. Both are kept
+// with the post, so they stay when the webhook is deleted.
+message App {
+  // The name the post was made under: the request's own, else the webhook's name; a display name's bounds.
+  string name = 1;
+  // The webhook's own name when it posted.
+  string webhook_name = 2;
+}
+
+// What a message shows of the thread started on it.
+message ThreadSummary {
+  // The thread's timeline, which `History`, `CatchUp`, `SendMessage` and `MarkRead` take.
+  string timeline_id = 1;
+  // The living replies in it.
+  uint32 replies = 2;
+  // When the last living reply was sent, in seconds since the epoch; absent with none.
+  optional int64 last_reply_at = 3;
+}
+
+// A message in brief, enough for a list's row: who wrote it, the start of its text and when.
+message Preview {
+  // As `Message.user_id`; absent when its writer's account is gone.
+  optional string user_id = 1;
+  // The first line of its body, at most 100 Unicode scalar values (`proto::rules::PREVIEW_CHARS`), cut there.
+  string text = 2;
+  // When it was sent, in seconds since the epoch.
+  int64 created_at = 3;
+}
+
+// A link preview as its sender's client sends it, one of the links of the body: the page's own title and
+// description and, if it had one, a picture the client uploaded like an attachment. The server never fetches the page:
+// this is the sender's claim about it, which a reader shows next to the link and does not trust further than that.
+message LinkPreview {
+  // The text of one `Link` span of the body, and an `https://` URL, else `INVALID_REQUEST`. A preview of a message
+  // whose body no longer holds that link is refused the same way.
+  string url = 1;
+  // 1 to 200 Unicode scalar values (`proto::rules::MAX_PREVIEW_TITLE_CHARS`), trimmed, holding no control character or
+  // direction override; another is `INVALID_REQUEST`, never cut.
+  string title = 2;
+  // At most 500 Unicode scalar values (`proto::rules::MAX_PREVIEW_DESCRIPTION_CHARS`), shaped as the title; empty for
+  // none.
+  string description = 3;
+  // A picture the sender uploaded as an attachment and has not sent, one file id of 16 bytes: taken exactly as
+  // `SendMessage.files` are (the same checks, `ATTACH_FILES`, the quota), and not also one of those. A file that is not
+  // a picture the server read is `INVALID_REQUEST`. Absent for none.
+  optional bytes file = 4;
+}
+
+// A link preview as readers see it: the sender's `LinkPreview` as kept, its picture as an attachment is shown, read by
+// whoever may read the message's timeline (`GET /v1/files/<file_id>`).
+message LinkCard {
+  // As `LinkPreview.url`.
+  string url = 1;
+  // As `LinkPreview.title`.
+  string title = 2;
+  // As `LinkPreview.description`; empty for none.
+  string description = 3;
+  // The picture, with its sides and thumbnail as an `Attachment` has them; absent for none. Its `name` is empty.
+  optional Attachment picture = 4;
+}
+
+// A run of a body that names something by id, or a link. Ranges count Unicode scalar values of the body from 0, the
+// end exclusive; a message's spans are sorted by start, never empty, never overlapping, and inside the body.
+message Span {
+  // The first scalar value of the run.
+  uint32 start = 1;
+  // One past its last scalar value.
+  uint32 end = 2;
+  // What it names; absent, the span is `INVALID_REQUEST`.
+  oneof kind {
+    // A member, by `Person.user_id`.
+    string user_id = 3;
+    // A role, by `RoleEntry.role_id`.
+    string role_id = 4;
+    // Every member who may read the timeline.
+    Everyone everyone = 5;
+    // Every member who may read the timeline and was signed in when it was sent.
+    Here here = 6;
+    // A channel the sender sees, by `ChannelSummary.channel_id`.
+    string channel_id = 7;
+    // A custom emoji of the server, by `Emoji.emoji_id`; its text is `:name:`.
+    string emoji_id = 8;
+    // A link to the text of its run, which parses as an `http://` or `https://` URL.
+    Link link = 9;
+  }
+}
+
+// `Span.everyone`: it says nothing more.
+message Everyone {}
+
+// `Span.here`: it says nothing more.
+message Here {}
+
+// `Span.link`: its target is the text of its run, so no link reads as one place and goes to another.
+message Link {}
+
+// A file sent with a message, whose bytes travel over HTTP (`GET /v1/files/<file_id>`) to whoever may read its timeline.
+message Attachment {
+  // A file's id, 32 lower-case hex digits.
+  string file_id = 1;
+  // The name it was sent with, at most 255 bytes.
+  string name = 2;
+  // Its size in bytes.
+  uint64 size = 3;
+  // Its media type as the server kept it: a picture's own, else `application/octet-stream`.
+  string media_type = 4;
+  // A picture's width in pixels; 0 for any other file.
+  uint32 width = 5;
+  // A picture's height in pixels; 0 for any other file.
+  uint32 height = 6;
+  // A picture's thumbnail, a file's id; absent for any other file.
+  optional string thumbnail = 7;
+}
+
+// One emoji a reaction is made with.
+message ReactionKey {
+  // Absent, the reaction is `INVALID_REQUEST`.
+  oneof emoji {
+    // A Unicode emoji, at most 32 bytes.
+    string unicode = 1;
+    // A custom emoji of the server, by `Emoji.emoji_id`.
+    string custom_id = 2;
+  }
+}
+
+// One emoji reacted with on a message, and how many reacted with it.
+message Reaction {
+  // The emoji.
+  ReactionKey emoji = 1;
+  // How many members reacted with it, at least 1.
+  uint32 count = 2;
+}
+
+// The message a reply answers, as the reply keeps it.
+message Reply {
+  // As `Message.message_id`; the message may since have been deleted.
+  string message_id = 1;
+  // Its place in the timeline, by which a client asks for it (`History.around`).
+  uint64 place = 2;
+}
+
+// Sends a message, answered with it as stored (`Message`). A resend after a lost reply carries the same `nonce` and
+// is answered with the first, never a second message.
+message SendMessage {
+  option (sent_by) = CLIENT;
+  option (reply) = "Message";
+  // A timeline; an unknown one is `NOT_FOUND`.
+  string timeline_id = 1;
+  // At most 4,000 Unicode scalar values, new lines and tabs kept; white space alone, longer, or holding another
+  // control character or a direction override (U+202A to U+202E) is `INVALID_REQUEST`, never cut. Empty only with
+  // `files`, which say enough alone.
+  string body = 2;
+  // 16 bytes the client draws for this send, unique for the account for a day; any other length is `INVALID_REQUEST`.
+  bytes nonce = 3;
+  // What the body names, as `Span` says; out of shape, or naming what the sender may not name, is `INVALID_REQUEST`,
+  // and `@everyone`, `@here` or a role without `MENTION_EVERYONE` is `NOT_AUTHORIZED`.
+  repeated Span spans = 4 [(most) = 200];
+  // Files the sender uploaded and has not sent, each a 16-byte id back to back, at most 10, each once, under
+  // `ATTACH_FILES`; another length, a file of another kind, another's, sent already or missing is `INVALID_REQUEST`.
+  bytes files = 5;
+  // The message this answers, in the same timeline, else `INVALID_REQUEST`; absent for none.
+  optional string reply_to = 6;
+  // The reply mentions the author of the message it answers; ignored without `reply_to`.
+  bool mention_author = 7;
+  // The preview of one of the body's links, while the server's `LINK_PREVIEWS` switch is on; absent for none.
+  optional LinkPreview preview = 8;
+  // The id of a message of the channel `timeline_id` is, while the server's `THREADS` switch is on: this message is the
+  // first reply of that message's thread, made with it, or a reply to it when it holds a thread already, so two first
+  // replies at once share one. The thread's timeline is `Message.timeline_id` of the answer. A message of a conversation
+  // or of a thread, or of another timeline than `timeline_id`, is `INVALID_REQUEST`; a deleted or unknown one is
+  // `NOT_FOUND`. The sender follows the thread, and so does the root's author when a member who reads the channel.
+  optional string thread_of = 9;
+}
+
+// Replaces the body of one's own message, answered with it (`Message`); another's is `NOT_AUTHORIZED`, a deleted one
+// `NOT_FOUND`.
+message EditMessage {
+  option (sent_by) = CLIENT;
+  option (reply) = "Message";
+  // As `Message.message_id`; one no message holds is `NOT_FOUND`.
+  string message_id = 1;
+  // As `SendMessage.body`.
+  string body = 2;
+  // As `SendMessage.spans`, replacing the message's.
+  repeated Span spans = 3 [(most) = 200];
+  // The message's preview after the edit, replacing the one it had: absent drops it, and the file it held is
+  // released. One whose link the new body no longer holds is `INVALID_REQUEST`, as `SendMessage.preview` says.
+  optional LinkPreview preview = 4;
+}
+
+// Deletes one's own message, or with `MANAGE_MESSAGES` anyone's, answered with its tombstone (`Message`, no body).
+message DeleteMessage {
+  option (sent_by) = CLIENT;
+  option (reply) = "Message";
+  // As `Message.message_id`; one no message holds is `NOT_FOUND`.
+  string message_id = 1;
+}
+
+// Asks for a page of a timeline's history, answered `MessagePage`.
+message History {
+  option (sent_by) = CLIENT;
+  option (reply) = "MessagePage";
+  // A timeline; an unknown one is `NOT_FOUND`.
+  string timeline_id = 1;
+  // Where the page is, by a place in the timeline (`Message.place`), whether or not a message is kept there; absent
+  // reads as the newest.
+  oneof anchor {
+    // The messages before this place.
+    uint64 before = 2;
+    // The messages after this place.
+    uint64 after = 3;
+    // The message at this place, if kept, and those around it.
+    uint64 around = 4;
+  }
+  // At most this many, up to 100; 0 reads as 100. A page also holds no more than fit half a frame.
+  uint32 limit = 5;
+}
+
+// A page of history, oldest first, deleted messages included.
+message MessagePage {
+  option (sent_by) = SERVER;
+  // The timeline asked for.
+  string timeline_id = 1;
+  // At most the limit asked for and half a frame's bytes, those nearest the anchor, never none; in place order.
+  repeated Message messages = 2;
+  // Older messages are kept before the first, those the page had no room for included.
+  bool older = 3;
+  // Newer messages follow the last, those the page had no room for included.
+  bool newer = 4;
+  // The timeline's revision now: where a `CatchUp` starts.
+  uint64 revision = 5;
+}
+
+// Asks for every message of a timeline changed after `since`, answered `Changes`.
+message CatchUp {
+  option (sent_by) = CLIENT;
+  option (reply) = "Changes";
+  // A timeline; an unknown one is `NOT_FOUND`.
+  string timeline_id = 1;
+  // A revision this client read, from a `MessagePage`, a `Changes` or a `Message`.
+  uint64 since = 2;
+}
+
+// Marks this account's messages in a timeline read through a revision, under `CHANNEL_READ`; answered `Ok`. A mark
+// only rises: one at or below the account's is `Ok` and changes nothing. A revision past the timeline's is
+// `INVALID_REQUEST`; a timeline no one can read is `NOT_FOUND`. The account's sockets are told its standing: in the
+// channel that owns the timeline (`ChannelStanding`), or, for a conversation or a thread, in the timeline
+// (`TimelineStanding`), and for a followed thread in its channel too.
+message MarkRead {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // A timeline; an unknown one is `NOT_FOUND`.
+  string timeline_id = 1;
+  // A revision this client read, from a `MessagePage`, a `Changes` or a `Message`.
+  uint64 revision = 2;
+}
+
+// The answer to `CatchUp`: the messages changed since, or `reload`.
+message Changes {
+  option (sent_by) = SERVER;
+  // The timeline asked for.
+  string timeline_id = 1;
+  // In revision order; empty when `reload`.
+  repeated Message changed = 2;
+  // More than 500 changed or more than fit half a frame, or `since` is past what the server keeps: the timeline is
+  // read again from a page.
+  bool reload = 3;
+  // The timeline's revision now.
+  uint64 revision = 4;
+}
+
+// A message sent, edited or deleted, told whole to every session that may read its timeline.
+message MessageChanged {
+  // The message as it is now, at its revision.
+  Message message = 1;
+}
+
+// A writer's messages in one timeline deleted at once: what a member who left, asking for it, leaves. Every one of
+// theirs at or before `through` is deleted at `revision`, with no body; one held at a higher revision is newer and
+// kept. A leaver's messages go a batch at a time, so a timeline may be told this more than once.
+message MessagesWithdrawn {
+  // The timeline.
+  string timeline_id = 1;
+  // The id members knew the writer by (`Message.user_id`), which messages read before they left carry.
+  string user_id = 2;
+  // The writer as their messages name them now (`Message.former_author`).
+  string former_author = 3;
+  // The place of the last message deleted: every one of theirs at or before it is deleted.
+  uint64 through = 4;
+  // The timeline's revision after it, which each of them carries.
+  uint64 revision = 5;
+  // When they were deleted, in seconds since the epoch: each one's `edited_at`.
+  int64 deleted_at = 6;
+}
+
+// Reacts to a message with an emoji, under `ADD_REACTIONS`, answered `Ok`; reacting again with the same is `Ok` and
+// changes nothing. A 21st distinct emoji on one message is `INVALID_REQUEST`. The message is told whole at its new
+// revision, and the account's sockets its own reactions (`ReactionsOfYours`).
+message React {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // As `Message.message_id`; a deleted one is `NOT_FOUND`.
+  string message_id = 1;
+  // A Unicode emoji (`proto::rules::unicode_emoji`) or a custom emoji the server holds, else `INVALID_REQUEST`.
+  ReactionKey emoji = 2;
+}
+
+// Takes back one's own reaction, answered `Ok`; one not made is `Ok` and changes nothing. Told as `React` is.
+message Unreact {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // As `React.message_id`.
+  string message_id = 1;
+  // As `React.emoji`.
+  ReactionKey emoji = 2;
+}
+
+// Pins a message, under `PIN_MESSAGES`, answered `Ok`; a pinned one is `Ok` and changes nothing. A 251st pin in one
+// timeline is `INVALID_REQUEST`. The message is told whole at its new revision.
+message Pin {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // As `Message.message_id`; a deleted one is `NOT_FOUND`.
+  string message_id = 1;
+}
+
+// Unpins a message, under `PIN_MESSAGES`, answered `Ok`; one not pinned is `Ok` and changes nothing. Told as `Pin` is.
+message Unpin {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // As `Message.message_id`.
+  string message_id = 1;
+}
+
+// Where a page of pins ends: its last pin's time and that message's place, which orders pins of the same second.
+message PinsBefore {
+  // As `Message.pinned_at`.
+  int64 pinned_at = 1;
+  // As `Message.place`.
+  uint64 place = 2;
+}
+
+// Asks for a timeline's pinned messages, newest pin first (the later place first within a second), 50 a page,
+// answered `MessagePage`: its `older` says more were pinned before the last.
+message ListPins {
+  option (sent_by) = CLIENT;
+  option (reply) = "MessagePage";
+  // A timeline; an unknown one is `NOT_FOUND`.
+  string timeline_id = 1;
+  // The pins after the last page's last in that order; absent for the newest.
+  optional PinsBefore before = 2;
+}
+
+// The asker is writing in a timeline, under `SEND_MESSAGE`: a tell, sent at most once every 3 seconds while a draft
+// changes. Its readers are told who is writing (`TypingNow`).
+message Typing {
+  option (sent_by) = CLIENT;
+  // A timeline; one the asker may not write in is passed over.
+  string timeline_id = 1;
+}
+
+// The account's own reactions on a message after one of its sockets reacted, told to the account's sockets alone.
+message ReactionsOfYours {
+  // As `Message.message_id`.
+  string message_id = 1;
+  // The timeline it is in.
+  string timeline_id = 2;
+  // The message's revision they are of: of two, the higher is the account's reactions now.
+  uint64 revision = 3;
+  // As `Message.mine`, whole.
+  repeated ReactionKey mine = 4;
+}
+
+// Who is writing in a timeline now, told whole to every session that may read it, out of the store's order (no
+// cursor), at most once every 3 seconds a timeline. A member is in it for 8 seconds after their last `Typing`, or
+// until they send; empty, nobody is.
+message TypingNow {
+  // The timeline.
+  string timeline_id = 1;
+  // As `Person.user_id`, each once.
+  repeated string user_ids = 2;
+}
+
+// What this account has read of a timeline no channel owns, and how much is unread there: a conversation or a thread. Its
+// own, told only to its own sockets, in `Conversations` and `FollowedThreads`, and on each `MarkRead`, `FollowThread`
+// and reply that makes the account follow a thread. A followed thread's counts are also in its channel's
+// `ChannelStanding`.
+message TimelineStanding {
+  // The timeline.
+  string timeline_id = 1;
+  // The revision of the timeline this account has read through: a message placed after it is unread.
+  uint64 read = 2;
+  // The messages after `read` not written by this account, counted up to 100.
+  uint32 unread = 3;
+  // Of those, the ones that mention this account (`proto::notify::mentions_of`), counted up to 100; in a conversation
+  // every message names its reader, so this is `unread`.
+  uint32 mentions = 4;
+  // The account follows the thread; always false for a conversation.
+  bool followed = 5;
+}
+
+// Follows a thread or stops following it, under `CHANNEL_READ` in its channel, answered `Ok`; the asker's sockets are
+// told the thread's standing (`TimelineStanding`) and its channel's (`ChannelStanding`). The same as it was is `Ok` and
+// changes nothing. An account follows at most 500 threads (`proto::rules::MAX_FOLLOWED`): a 501st is `INVALID_REQUEST`.
+// Making a thread by its first reply, replying in one or being named in a reply makes the account follow it, as far as
+// that cap allows; so does the author of the root when a member who reads the channel.
+message FollowThread {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // A thread's timeline; one that is none, or whose channel the asker does not see, is `NOT_FOUND`.
+  string timeline_id = 1;
+  // True follows, false stops following.
+  bool follow = 2;
+}
+
+// Asks for the threads the account follows in channels it sees, answered `FollowedThreads`.
+message ListFollowed {
+  option (sent_by) = CLIENT;
+  option (reply) = "FollowedThreads";
+}
+
+// A followed thread as a list shows it.
+message FollowedThread {
+  // The account's standing in it.
+  TimelineStanding standing = 1;
+  // The channel its root is in, by `ChannelSummary.channel_id`.
+  string channel_id = 2;
+  // The root message, by `Message.message_id`.
+  string root_message_id = 3;
+  // The root in brief; absent when it was deleted.
+  optional Preview root = 4;
+  // When its last living reply was sent, in seconds since the epoch; absent with none.
+  optional int64 last_reply_at = 5;
+  // Its living replies, as `ThreadSummary.replies` counts them.
+  uint32 replies = 6;
+}
+
+// The threads the account follows, the most recently active first, at most 100 (`proto::rules::MAX_FOLLOWED_LISTED`).
+message FollowedThreads {
+  option (sent_by) = SERVER;
+  // Each once.
+  repeated FollowedThread threads = 1;
+}
+
+// Searches the messages this account may read for words, answered `SearchPage`, under no word: what is found is
+// only in timelines the asker reads, a channel it sees, a conversation it is in or a thread of a channel it sees. A
+// message is found by the words of its body as it is now (a tombstone never, an edited-away word no longer), a little
+// after it is sent. Every word typed must be in the body, the last one as far as it goes (a prefix), in any order and
+// case, with accents ignored; nothing typed is read as syntax. The words are also looked for
+// in the names of a message's attachments, each match saying which it was (`Found`). Newest first, at most 50 a page
+// (`proto::rules::PINS_PAGE`, and no more than fit half a frame). The query is at most 100 Unicode scalar values
+// (`proto::rules::MAX_SEARCH_CHARS`) shaped as a name is (trimmed, no control character or direction override) and
+// holds at least one word, else `INVALID_REQUEST`; searches are paced per account, one more than that is
+// `RATE_LIMITED`.
+message Search {
+  option (sent_by) = CLIENT;
+  option (reply) = "SearchPage";
+  // What was typed.
+  string query = 1;
+  // Only this timeline and, if it is a channel's, the threads started in it; absent for everywhere the asker reads. One
+  // the asker does not read, or none, is `NOT_FOUND`, as `History` says. The client's window always searches the whole
+  // server and leaves it absent; the server still honours it.
+  optional string timeline_id = 2;
+  // The matches after the last page's last, in that order; absent for the newest.
+  optional SearchBefore before = 3;
+}
+
+// Where a page of matches ends: its last match's message. Ids rise with time and are unique, so this alone orders.
+message SearchBefore {
+  // As `Message.message_id`; the match need not be kept any more.
+  string message_id = 1;
+}
+
+// One match: the message as a page of its timeline holds it, and for a reply in a thread where that thread stands.
+message Found {
+  // The message, read for the asker (`Message.mine`).
+  Message message = 1;
+  // The channel the thread of a reply is in, as `ChannelSummary.channel_id`; absent unless the message is in a thread.
+  optional string channel_id = 2;
+  // The message the thread was started on, in that channel; absent unless the message is in a thread.
+  optional string root_message_id = 3;
+  // The attachments of the message whose names matched, as `Attachment.file_id` names them, in the order sent; none
+  // when only the body matched.
+  repeated string file_ids = 4;
+  // Whether the message's body matched.
+  bool in_body = 5;
+}
+
+// A page of matches, newest first.
+message SearchPage {
+  option (sent_by) = SERVER;
+  // At most 50 and half a frame's bytes, never more than the asker may read; none when nothing matches.
+  repeated Found found = 1;
+  // More matches follow the last, those the page had no room for included.
+  bool older = 2;
+}

@@ -1,0 +1,212 @@
+// One exchange over the one WebSocket per session: every op either end can send, each named once, and what each is
+// (`options.proto`: who sends it, and the op that answers an ask). Numbers 1 and 2 are the framing, 3 to 6 the
+// opening's ops (`Handshake`, `ServerHello`) and its refusal's (`Error`, `Close`): these, the field 1 of each and the
+// values `PROTO_VERSION_MISMATCH` and `VERSION_MISMATCH` keep their numbers across majors, so a build of another major
+// is still told which end to update.
+syntax = "proto3";
+
+package chatkord.v1;
+
+import "chatkord/v1/options.proto";
+
+import "chatkord/v1/shared.proto";
+import "chatkord/v1/auth.proto";
+import "chatkord/v1/channel.proto";
+import "chatkord/v1/chat.proto";
+import "chatkord/v1/conversation.proto";
+import "chatkord/v1/people.proto";
+import "chatkord/v1/voice.proto";
+import "chatkord/v1/events.proto";
+import "chatkord/v1/server.proto";
+import "chatkord/v1/emoji.proto";
+import "chatkord/v1/notify.proto";
+import "chatkord/v1/webhook.proto";
+
+// One frame of the socket: its number, what it answers, and the op it carries.
+message WireMessage {
+  // A request's number, chosen by its sender, which a reply's `ack_of` names; a reply carries the server's own. A
+  // one-way frame the server sends (an event, occupancy, presence, typing) carries none, so it is the same bytes for
+  // every socket.
+  uint64 seq = 1;
+  // The `seq` of the request this answers; absent on a one-way message. An `Error` with it answers that request
+  // alone, even late; only one without it speaks for the session.
+  optional uint64 ack_of = 2;
+
+  // The op; absent, the frame is refused: `UNKNOWN_OP` when it held an op this build does not know, else `BAD_FRAME`.
+  oneof body {
+    Handshake handshake = 3;
+    ServerHello server_hello = 4;
+    Error error = 5;
+    Close close = 6;
+
+    Login login = 7;
+    LoginAck login_ack = 8;
+    Register register = 9;
+
+    SignOut sign_out = 10;
+    ChangePassword change_password = 11;
+    SetDisplayName set_display_name = 12;
+    Kick kick = 13;
+
+    ChannelRename channel_rename = 14;
+    ChannelsList channels_list = 15;
+    ChannelsSummary channels_summary = 16;
+    Ok ok = 17;
+    ChannelCreate channel_create = 18;
+    ChannelDelete channel_delete = 19;
+
+    VoiceJoin voice_join = 20;
+    VoiceLeave voice_leave = 21;
+    VoiceProduce voice_produce = 22;
+    VoiceConsume voice_consume = 23;
+    SfuAnswer sfu_answer = 24;
+    ConsumerState consumer_state = 25;
+    VoiceState voice_state = 26;
+    VoiceStop voice_stop = 27;
+    VoiceResume voice_resume = 28;
+    VoiceSetState voice_set_state = 29;
+    VoiceMuteMember voice_mute_member = 30;
+    VoiceTakeOut voice_take_out = 31;
+    VoiceRelease voice_release = 32;
+
+    CreateInvite create_invite = 33;
+    InviteCreated invite_created = 34;
+    ListInvites list_invites = 35;
+    Invites invites = 36;
+    RevokeInvite revoke_invite = 37;
+    ResetPassword reset_password = 38;
+    PasswordReset password_reset = 39;
+
+    InviteInfo invite_info = 40;
+    InviteStanding invite_standing = 41;
+    LeaveServer leave_server = 42;
+    ListMembers list_members = 43;
+    Members members = 44;
+    ListRoles list_roles = 45;
+    Roles roles = 46;
+    SetRole set_role = 47;
+    TransferOwnership transfer_ownership = 48;
+    SetServerName set_server_name = 49;
+    SetServerColour set_server_colour = 50;
+    SetProfileColour set_profile_colour = 51;
+    SetServerPicture set_server_picture = 52;
+    SfuRestartIce sfu_restart_ice = 53;
+    SfuIce sfu_ice = 54;
+    VoicePause voice_pause = 55;
+
+    SendMessage send_message = 56;
+    EditMessage edit_message = 57;
+    DeleteMessage delete_message = 58;
+    History history = 59;
+    MessagePage message_page = 60;
+    CatchUp catch_up = 61;
+    Changes changes = 62;
+    Message message = 63;
+    ListPeople list_people = 64;
+    People people = 65;
+    MarkRead mark_read = 66;
+    CreateRole create_role = 67;
+    SetRoleName set_role_name = 68;
+    SetRoleColour set_role_colour = 69;
+    MoveRole move_role = 70;
+    DeleteRole delete_role = 71;
+    SetRoleWord set_role_word = 72;
+    SetChannelOverwrite set_channel_overwrite = 73;
+    ListChannelOverwrites list_channel_overwrites = 74;
+    ChannelOverwrites channel_overwrites = 75;
+    CategoryCreate category_create = 76;
+    CategoryRename category_rename = 77;
+    CategoryDelete category_delete = 78;
+    CategoryMove category_move = 79;
+    ChannelMove channel_move = 80;
+    SetBanned set_banned = 81;
+    React react = 82;
+    Unreact unreact = 83;
+    Pin pin = 84;
+    Unpin unpin = 85;
+    ListPins list_pins = 86;
+    Typing typing = 87;
+    AddEmoji add_emoji = 88;
+    RenameEmoji rename_emoji = 89;
+    DeleteEmoji delete_emoji = 90;
+    ListEmoji list_emoji = 91;
+    EmojiPage emoji_page = 92;
+    Emoji emoji = 93;
+    SetServerNotify set_server_notify = 94;
+    SetChannelNotify set_channel_notify = 95;
+    GetNotify get_notify = 96;
+    NotifySettings notify_settings = 97;
+    OpenConversation open_conversation = 98;
+    Conversation conversation = 99;
+    ListConversations list_conversations = 100;
+    Conversations conversations = 101;
+    FollowThread follow_thread = 102;
+    ListFollowed list_followed = 103;
+    FollowedThreads followed_threads = 104;
+    Activity activity = 105;
+    Search search = 106;
+    SearchPage search_page = 107;
+    GetServerReport get_server_report = 108;
+    ServerReport server_report = 109;
+    SetServerSwitch set_server_switch = 110;
+    SetServerHosting set_server_hosting = 111;
+    GetServerHosting get_server_hosting = 112;
+    ServerHosting server_hosting = 113;
+    CreateWebhook create_webhook = 114;
+    WebhookMade webhook_made = 115;
+    ListWebhooks list_webhooks = 116;
+    Webhooks webhooks = 117;
+    RegenerateWebhook regenerate_webhook = 118;
+    DeleteWebhook delete_webhook = 119;
+
+    Event event = 120;
+    Heartbeat heartbeat = 121;
+    Resume resume = 122;
+    Resumed resumed = 123;
+    SetStatus set_status = 124;
+    SetProfilePicture set_profile_picture = 125;
+  }
+}
+
+// The client's opening exchange: it states the protocol it speaks, and the
+// server states its own in the same field. The server's answer is `ServerHello`.
+// To a client of another major it is `ServerHello` with only `proto_version`,
+// then the `PROTO_VERSION_MISMATCH` refusal, so that client can say which end to update.
+// `client_build` and `platform` are at most 64 bytes each, or the socket is refused.
+message Handshake {
+  option (sent_by) = CLIENT;
+  option (reply) = "ServerHello";
+  // The protocol the client speaks; absent, the opening ends as a version mismatch.
+  ProtoVersion proto_version = 1;
+  // The client's release version, for the operator's view; the server decides nothing on it.
+  string client_build = 2;
+  // The client's operating system, as Rust names it (`linux`, `windows`); the server decides nothing on it.
+  string platform = 3;
+}
+
+// The server's answer to `Handshake`: who it is before anyone signs in.
+message ServerHello {
+  option (sent_by) = SERVER;
+  // The protocol the server speaks.
+  ProtoVersion proto_version = 1;
+  // The server's release version, which a client may show.
+  string server_build = 2;
+  // What this server serves of what a later minor of its major adds, which a client uses only when offered; none in a
+  // major's first minor.
+  repeated Feature features = 3;
+  // The server's name as an admin set it (or its operator first did), so a person sees which
+  // server this is before signing in; absent when none is set.
+  optional string server_name = 4;
+  // The colour of its picture, `#RRGGBB`; absent for Chatkord's.
+  optional string colour = 5;
+  // Its picture, a file's id fetched over HTTP once signed in; absent for its initial.
+  optional string picture = 6;
+  // The most bytes one attachment may be here, as an administrator set it: a larger upload is refused before it is
+  // sent.
+  uint64 attachment_max_bytes = 7;
+  // The most bytes one account's files may hold together here, as an administrator set it, thumbnails counted;
+  // absent when there is no limit.
+  optional uint64 account_files_max_bytes = 8;
+  // Each switch an administrator has set off, once, in the order of the enum; none when all are on.
+  repeated Switch switched_off = 9;
+}

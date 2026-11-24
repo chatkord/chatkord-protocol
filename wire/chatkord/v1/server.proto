@@ -1,0 +1,114 @@
+// The server itself as people see it: its name, its colour and its picture, which an administrator sets (`MANAGE_SERVER`),
+// the debug report the same administrators may ask for, and its settings: which switches are on and the
+// hosting facts (public address, caps and limits), all under `MANAGE_SERVER`.
+// Every signed-in session is told a change (`ServerChanged`), and a new one reads them in the greeting
+// (`ServerHello`). A colour is told as `#RRGGBB`; a picture is a file's id, 32 lower-case hex digits, whose bytes travel
+// over HTTP.
+syntax = "proto3";
+
+package chatkord.v1;
+
+import "chatkord/v1/options.proto";
+import "chatkord/v1/shared.proto";
+
+// Names the server, or with none leaves it nameless: people then see its address. A name is
+// bounded as the name others see is; an empty one is refused, not taken for none.
+message SetServerName {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // Trimmed, then at most 64 characters with no control or text-direction character; anything else is
+  // `INVALID_REQUEST`.
+  optional string name = 1;
+}
+
+// Colours the server's picture, or with none goes back to Chatkord's.
+message SetServerColour {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // Six hexadecimal digits, `#` optional, either case, kept and told as `#RRGGBB` in upper case; anything else is
+  // `INVALID_REQUEST`.
+  optional string colour = 1;
+}
+
+// Makes a file the asking admin may see (an upload of theirs, `POST /v1/files?kind=server-picture`) the
+// server's picture, or with none goes back to its initial on its colour.
+message SetServerPicture {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // A file's id, 32 lower-case hex digits, else `INVALID_REQUEST`; a file of another kind, unknown, or one the asker
+  // may not see is `NOT_FOUND`.
+  optional string picture = 1;
+}
+
+// Asks for the server's debug report, under `MANAGE_SERVER`:
+// answered `ServerReport`. An account without the word is `NOT_AUTHORIZED`. One account may ask once in ten
+// seconds and the server builds one report at a time, else `RATE_LIMITED`; a store that cannot be read is `INTERNAL`.
+message GetServerReport {
+  option (sent_by) = CLIENT;
+  option (reply) = "ServerReport";
+}
+
+// Where the server's debug report is downloaded: too large for a frame, it travels over HTTP as a file does. The
+// report is plain text of its build, system, settings, store, upkeep and voice figures and recent log, every value a
+// count, a flag or a word the source wrote, none of them a name, a message, an address, a token or a key. It is read,
+// listed and saved by the person who asked and sent nowhere.
+message ServerReport {
+  option (sent_by) = SERVER;
+  // A one-use download id. `GET /v1/files/reports/<id>` with the asker's own `Authorization: Bearer` answers the
+  // report as `text/plain`, at most `report::MAX_REPORT_BYTES` bytes, once, within a minute, and only to the account
+  // that asked; any other id (unknown, used, expired or another account's) is `404`.
+  string id = 1 [(secret) = true];
+}
+
+// Sets one switch of the server on or off, under `MANAGE_SERVER`, answered `Ok`; every session is told the switches
+// now off (`ServerChanged.switched_off`). An account without the word is `NOT_AUTHORIZED`.
+message SetServerSwitch {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // The switch; none, or one this end does not know, is `INVALID_REQUEST`.
+  Switch switch = 1;
+  // Whether it is on.
+  bool on = 2;
+}
+
+// The facts of where and how the server is hosted: its public address and what files an owner allows. Every
+// number is bounded by a minimum and a ceiling the code holds (`proto::rules::Hosting`), and one past either is
+// refused, never cut. Sizes are in mebibytes. The server's connection and op rates are its operator's, not a setting.
+message Hosting {
+  // Where clients reach this server, `host[:port]`, as a join link names it: a host name, an IPv4 address or a
+  // bracketed IPv6 one, and an optional port, no scheme or path, at most 259 bytes; absent for none known. Media is
+  // announced at the operator's media address, else this one's host, else the media listen address unless it is a
+  // wildcard; a voice join with none of them is `SERVER_UNAVAILABLE`.
+  optional string public_address = 1;
+  // The most one account's files may hold, in MiB; absent, there is no limit (the disk's room is the only one).
+  optional uint32 account_files_max_mib = 2;
+  // The most one attachment may be, in MiB; at most `account_files_max_mib` when that is set.
+  uint32 attachment_max_mib = 3;
+}
+
+// Sets the server's hosting facts whole, under `MANAGE_SERVER`, answered `Ok`; a value past its bound or an
+// attachment above the account's limit is `INVALID_REQUEST` and changes nothing. A change applies at once to what is
+// running; every session is told the new caps (`ServerChanged`).
+message SetServerHosting {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // The whole of it; absent is `INVALID_REQUEST`.
+  Hosting hosting = 1;
+}
+
+// Asks for the server's hosting facts and which switches are off, under `MANAGE_SERVER`: answered
+// `ServerHosting`.
+message GetServerHosting {
+  option (sent_by) = CLIENT;
+  option (reply) = "ServerHosting";
+}
+
+// The server's hosting facts as they are now, a value no one set read as the code's default, and the switches an
+// administrator has set off.
+message ServerHosting {
+  option (sent_by) = SERVER;
+  // As set.
+  Hosting hosting = 1;
+  // Each switch set off, once, in the order of the enum; none when all are on.
+  repeated Switch switched_off = 2;
+}

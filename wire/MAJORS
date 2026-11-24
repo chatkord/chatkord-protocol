@@ -1,0 +1,3 @@
+# The protocol majors, one a line, in the order they were used: a major is never used twice, so a breaking change
+# raises wire/PROTOCOL to a major above every line here and lists it (scripts/gate/schema.sh, wire/README.md "Versions").
+1

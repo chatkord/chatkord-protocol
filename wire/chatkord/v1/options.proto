@@ -1,0 +1,36 @@
+// What the schema says of its own fields beyond their type, for both ends to read from the generated descriptor.
+syntax = "proto3";
+
+package chatkord.v1;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FieldOptions {
+  // The field carries a secret (a password, a token, an invite code): no generated type prints it, which
+  // `proto::redact` proves for every field marked so.
+  bool secret = 50000;
+  // The most entries a repeated field a client sends may hold: a frame holding more is refused before it is decoded
+  // (`proto::entries`), so each such field costs a bounded number of values whatever its frame's size.
+  uint32 most = 50003;
+}
+
+// Who sends an op.
+enum Sender {
+  // Not said: a test refuses an op of the schema left so.
+  SENDER_UNSPECIFIED = 0;
+  // The client alone.
+  CLIENT = 1;
+  // The server alone.
+  SERVER = 2;
+  // Either end.
+  EITHER = 3;
+}
+
+extend google.protobuf.MessageOptions {
+  // Who sends this op, on every message `WireMessage` carries.
+  Sender sent_by = 50001;
+  // The op that answers this one, by its message's name: it makes a client's op an ask, which holds a slot of the
+  // asks in flight until answered by this op or `Error`. A client's op without one is a tell: nothing answers it and
+  // it holds no slot.
+  string reply = 50002;
+}

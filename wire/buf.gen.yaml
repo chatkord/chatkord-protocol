@@ -1,0 +1,43 @@
+# A local plugin, so a generation needs no network and no one's rate limit.
+version: v2
+plugins:
+  - local: protoc-gen-prost
+    out: proto/gen
+    # These carry a field marked `secret`, so their Debug is hand-written (proto/src/redact.rs) and never derived;
+    # its test fails for a marked field a type prints.
+    opt:
+      # The schema itself, encoded, beside the types: `proto::schema` reads each field's shape and marks from it.
+      - file_descriptor_set
+      - skip_debug=.chatkord.v1.PasswordCredential
+      - skip_debug=.chatkord.v1.TokenCredential
+      - skip_debug=.chatkord.v1.LoginAck
+      - skip_debug=.chatkord.v1.Register
+      - skip_debug=.chatkord.v1.ChangePassword
+      - skip_debug=.chatkord.v1.InviteCreated
+      - skip_debug=.chatkord.v1.InviteInfo
+      - skip_debug=.chatkord.v1.PasswordReset
+      - skip_debug=.chatkord.v1.LeaveServer
+      - skip_debug=.chatkord.v1.TransferOwnership
+      - skip_debug=.chatkord.v1.SetBanned
+      - skip_debug=.chatkord.v1.ServerReport
+      - skip_debug=.chatkord.v1.WebhookMade
+      # A message is the largest value the schema has; boxed in its event, so every event a ring or a queue keeps
+      # stays small.
+      - boxed=.chatkord.v1.MessageChanged.message
+      # A message's preview and a match's message would take it past what a frame of empty entries may decode into
+      # (proto/tests/decode_cost.rs).
+      - boxed=.chatkord.v1.Message.preview
+      - boxed=.chatkord.v1.Found.message
+      # An app author is two names where the others are one id: inline, it grows every message by a third name.
+      - boxed=.chatkord.v1.Message.author.app
+      # An ask is kept in a route table and a queue by value; the preview a send carries would make it the largest.
+      - boxed=.chatkord.v1.SendMessage.preview
+      - boxed=.chatkord.v1.EditMessage.preview
+      # `wire_message::Kind`, each op's fieldless twin. A comma inside an attribute is `\,`, and the value is
+      # quoted because ` #` would start a YAML comment.
+      - 'enum_attribute=.chatkord.v1.WireMessage.body=#[derive(::strum::EnumDiscriminants)] #[strum_discriminants(name(Kind)\, derive(::strum::IntoStaticStr\, Hash\, ::report::Public)\, doc = "The op a message carries\, named without its body."\, allow(missing_docs\, reason = "an arm is its op\, documented on its message"))]'
+      # A refusal's code is a fact a report may state.
+      - 'enum_attribute=.chatkord.v1.ErrorCode=#[derive(::report::Public)]'
+      # An op's or an event's arm is its message, whose comment is its contract.
+      - 'enum_attribute=.chatkord.v1.WireMessage.body=#[expect(missing_docs\, reason = "an arm is its message\, documented there")]'
+      - 'enum_attribute=.chatkord.v1.Event.kind=#[expect(missing_docs\, reason = "an arm is its message\, documented there")]'

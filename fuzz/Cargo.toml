@@ -1,0 +1,67 @@
+# The fuzz target of the one parser this repository owns: a server's frame into a client's reader, calling the entry
+# `proto::fuzz` keeps, where the replay test of the seeds reads the same function. Run by `mise run fuzz`; the gate
+# lints it and replays the seeds in `proto`'s own tests.
+[package]
+name = "fuzz"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+# cargo-fuzz's own runtime, its latest release: libFuzzer, built from its source (NCSA, allowed in deny.toml).
+libfuzzer-sys = "0.4.13"
+proto = { path = "../proto", features = ["testing"] }
+
+[workspace]
+
+# The root's lints, restated: cargo shares no table across workspaces, and `gate:lints` holds every copy equal.
+[workspace.lints.rust]
+missing_docs = "warn"
+unnameable_types = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
+unsafe_op_in_unsafe_fn = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+undocumented_unsafe_blocks = "warn"
+allow_attributes_without_reason = "warn"
+todo = "warn"
+unimplemented = "warn"
+unreachable = "warn"
+dbg_macro = "warn"
+exit = "warn"
+mem_forget = "warn"
+large_futures = "warn"
+large_stack_arrays = "warn"
+unnecessary_safety_comment = "warn"
+string_slice = "warn"
+needless_pass_by_value = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+borrow_as_ptr = "warn"
+ptr_as_ptr = "warn"
+ptr_cast_constness = "warn"
+as_ptr_cast_mut = "warn"
+multiple_unsafe_ops_per_block = "warn"
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+cast_possible_wrap = "warn"
+cast_lossless = "warn"
+allow_attributes = "warn"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "frame_from_server"
+path = "fuzz_targets/frame_from_server.rs"
+test = false
+doc = false
+bench = false

@@ -1,0 +1,322 @@
+// What the far end announces without being asked, and the only place stream lifetime is decided: a stream lives from
+// its `ProducerJoined` to its `ProducerClosed`, or until a `RoomSnapshot` leaves it out, never from a timer.
+syntax = "proto3";
+
+package chatkord.v1;
+
+import "chatkord/v1/options.proto";
+
+import "chatkord/v1/channel.proto";
+import "chatkord/v1/chat.proto";
+import "chatkord/v1/conversation.proto";
+import "chatkord/v1/emoji.proto";
+import "chatkord/v1/notify.proto";
+import "chatkord/v1/people.proto";
+import "chatkord/v1/shared.proto";
+import "chatkord/v1/voice.proto";
+
+// One announcement from the server: its `WireMessage` carries no `ack_of`, since nothing asked for it.
+message Event {
+  option (sent_by) = SERVER;
+
+  // Where this event stands in what the whole server tells, opaque: a client keeps the last and sends it in `Resume`.
+  // Absent on what is not told in order (a room's events, voice occupancy, state sent whole).
+  bytes cursor = 1;
+
+  // What happened. Absent, or an arm this build does not know, the event is passed over.
+  oneof kind {
+    MemberJoined member_joined = 2;
+    MemberLeft member_left = 3;
+    ProducerJoined producer_joined = 4;
+    ProducerClosed producer_closed = 5;
+    VoiceClosed voice_closed = 6;
+    RoomSnapshot room_snapshot = 7;
+    ChannelAdded channel_added = 8;
+    VoiceOccupancy voice_occupancy = 9;
+    MemberRenamed member_renamed = 10;
+    StandingChanged standing_changed = 11;
+    MemberState member_state = 12;
+    ServerChanged server_changed = 13;
+    MemberRecoloured member_recoloured = 14;
+    ShareWatched share_watched = 15;
+    MessageChanged message_changed = 16;
+    PersonArrived person_arrived = 17;
+    PersonLeft person_left = 18;
+    Rewound rewound = 19;
+    ChannelRenamed channel_renamed = 20;
+    ChannelRemoved channel_removed = 21;
+    ChannelStanding channel_standing = 22;
+    MessagesWithdrawn messages_withdrawn = 23;
+    RolesChanged roles_changed = 24;
+    CategoryAdded category_added = 25;
+    CategoryRenamed category_renamed = 26;
+    CategoryRemoved category_removed = 27;
+    CategoryMoved category_moved = 28;
+    ChannelMoved channel_moved = 29;
+    MemberRolesChanged member_roles_changed = 30;
+    PresenceChanged presence_changed = 31;
+    ChannelAccessChanged channel_access_changed = 32;
+    ReactionsOfYours reactions_of_yours = 33;
+    TypingNow typing_now = 34;
+    EmojiAdded emoji_added = 35;
+    EmojiRenamed emoji_renamed = 36;
+    EmojiRemoved emoji_removed = 37;
+    NotifyChanged notify_changed = 38;
+    ConversationOpened conversation_opened = 39;
+    TimelineStanding timeline_standing = 40;
+    DeviceInUse device_in_use = 41;
+    StatusChosen status_chosen = 42;
+    MemberPictured member_pictured = 43;
+  }
+}
+
+// Someone joined the voice channel this connection is in.
+message MemberJoined {
+  // As others see them; never this connection's own account, which learns of its join from `VoiceState`.
+  string user_id = 1;
+  // The room joined, spelled as `VoiceState.channel_id` is.
+  string channel_id = 2;
+  // The name others see: the one the member chose, or their username without one.
+  string display_name = 3;
+  // The colour the member picked, `#RRGGBB`; absent for none.
+  optional string colour = 4;
+}
+
+// Someone left the voice channel this connection is in, or was moved or taken out of it; told to the others in it,
+// after a `ProducerClosed` for each stream they had.
+message MemberLeft {
+  // As others see them; never this connection's own account.
+  string user_id = 1;
+  // The room left.
+  string channel_id = 2;
+}
+
+// A stream began: `user_id` is producing `kind`. A stream lives from this to its
+// `ProducerClosed`.
+message ProducerJoined {
+  // Never this connection's own account: a member is not told of its own stream.
+  string user_id = 1;
+  // Never `TRACK_KIND_UNSPECIFIED`.
+  TrackKind kind = 2;
+  // The room it is in, so a client that left one room ignores the last one's events.
+  string channel_id = 3;
+}
+
+// A stream ended: told to the room with `NORMAL`, and to its member too, with `NOT_ALLOWED`, when their roles ended
+// their share.
+message ProducerClosed {
+  // `NOT_ALLOWED` only to the member whose share their roles ended; everyone else reads `NORMAL`, whatever ended it.
+  CloseReason reason = 1;
+  // The member whose stream ended; this connection's own account only with `NOT_ALLOWED`.
+  string user_id = 2;
+  // The track that ended; the member's other tracks carry on.
+  TrackKind kind = 3;
+  // The room it was in, as on `ProducerJoined`.
+  string channel_id = 4;
+}
+
+// A member of the voice channel this connection is in muted, unmuted, deafened or
+// undeafened. The asker is not told of its own change, but is told when an administrator
+// mutes or unmutes them for everyone (`admin_muted`).
+message MemberState {
+  // The room. A member who joins muted or deafened is told this way too, right after their `MemberJoined`.
+  string channel_id = 1;
+  // The member whose state this is; this connection's own account only for an administrator's mute or its lifting.
+  string user_id = 2;
+  // By the member themselves; an administrator's hold never sets it, and lifting the hold leaves it as it is.
+  bool mic_muted = 3;
+  // The member hears nothing, and their microphone is paused as if muted.
+  bool deafened = 4;
+  // An administrator holds the member muted: their microphone is paused whatever `mic_muted` says.
+  bool admin_muted = 5;
+}
+
+// This connection's voice place ended, for `reason`.
+message VoiceClosed {
+  // The room the place was in.
+  string channel_id = 1;
+  // `MOVED` (the account joined elsewhere), `UNREACHABLE`, `CHANNEL_DELETED`, `NOT_ALLOWED` (its roles), `TAKEN_OUT`
+  // or `OVER_RATE`; never sent for the place's own `VoiceLeave`.
+  CloseReason reason = 2;
+}
+
+// The voice room this connection is in, whole: sent instead of the events it fell
+// too far behind to be sent. It replaces what the connection knew of the room;
+// a member or stream it leaves out is gone.
+message RoomSnapshot {
+  // The room, spelled as `VoiceState.channel_id` is.
+  string channel_id = 1;
+  // Everyone in the room, this connection's own member included, each with their state.
+  repeated MemberSummary members = 2;
+  // Every live stream in the room, this connection's own included.
+  repeated StreamRef streams = 3;
+  // This connection's own tracks that someone takes now, as `ShareWatched` last told.
+  repeated TrackKind watched = 4;
+}
+
+// Told to a member alone: whether anyone in the room takes one of their own tracks now, a consumer of it started and
+// not paused. A stream begins with nobody taking it. A sharer encodes only while watched.
+message ShareWatched {
+  // One of the member's own live shares or cameras; a microphone is never told.
+  TrackKind kind = 1;
+  // Someone takes it now.
+  bool watched = 2;
+}
+
+// A channel was made, last in its category; told to each session that may see it, followed by its standing there.
+message ChannelAdded {
+  // As the list shows it.
+  ChannelSummary channel = 1;
+  // The list's version with it (`ChannelsSummary.version`).
+  uint64 version = 2;
+}
+
+// A channel was renamed; told to each session that may see it.
+message ChannelRenamed {
+  // The channel, by its id.
+  string channel_id = 1;
+  // Its name now.
+  string name = 2;
+  // The list's version with it (`ChannelsSummary.version`).
+  uint64 version = 3;
+}
+
+// A channel was deleted, its voice room closed first (`VoiceClosed`); told to each session that could see it.
+message ChannelRemoved {
+  // The channel, by its id.
+  string channel_id = 1;
+  // The list's version without it (`ChannelsSummary.version`).
+  uint64 version = 2;
+}
+
+// Who is in a channel's voice room now, sent on every join, leave and change of a member's state, to each session that
+// may see the channel, and for each voice room it may see at sign-in, in a state told whole and after a `Resume`: the
+// one place a voice room's people are told.
+message VoiceOccupancy {
+  // A voice channel; a room that empties is told once more, with nobody in it.
+  string channel_id = 1;
+  // Each with their state, place and colour; how many are in the room is their count.
+  repeated MemberSummary people = 2;
+}
+
+// A member chose the name others see, or went back to their username; told to every signed-in session.
+message MemberRenamed {
+  // As others see them; told for this connection's own account too.
+  string user_id = 1;
+  // The name others see now: the chosen one, trimmed and at most 64 characters, or the username without one.
+  string display_name = 2;
+}
+
+// A member picked the colour others see them in, or went back to none; told to every signed-in session.
+message MemberRecoloured {
+  // As others see them; told for this connection's own account too.
+  string user_id = 1;
+  // `#RRGGBB` in upper case; absent for none.
+  optional string colour = 2;
+}
+
+// A member chose the picture others see them by, or went back to none; told to every
+// signed-in session.
+message MemberPictured {
+  // As others see them; told for this connection's own account too.
+  string user_id = 1;
+  // A file's id, 32 lower-case hex digits; absent for none.
+  optional string picture = 2;
+}
+
+// The server's name, colour, picture, switches or caps changed: all as they are now, absent for none; told to every
+// signed-in session.
+message ServerChanged {
+  // Trimmed, at most 64 characters; absent, people see the server's address.
+  optional string name = 1;
+  // `#RRGGBB` in upper case; absent, the picture is on Chatkord's colour.
+  optional string colour = 2;
+  // A file's id, 32 lower-case hex digits; absent, the picture is the name's initial on the colour.
+  optional string picture = 3;
+  // Each switch an administrator has set off now, once, in the order of the enum; none when all are on.
+  repeated Switch switched_off = 4;
+  // The most bytes one attachment may be now, as `ServerHello.attachment_max_bytes`.
+  uint64 attachment_max_bytes = 5;
+  // The most bytes one account's files may hold now, as `ServerHello.account_files_max_bytes`; absent for no limit.
+  optional uint64 account_files_max_bytes = 6;
+}
+
+// This account's roles, their words or their order changed, or what it may see: what `LoginAck` said of it, again;
+// told only to the account it is about, which lists the channels again for its standing in each.
+message StandingChanged {
+  // Where the account stands in the roles' order now, as `LoginAck.place`.
+  optional uint32 place = 1;
+  // The grant words its roles hold, each once, in a fixed order; a client passes over a word it does not know.
+  repeated string grants = 2;
+}
+
+// What follows is this connection's state told whole, unasked: the server told more than the connection read, and it
+// missed some. A client reads what the state leaves out again, as after `Resumed { whole: true }`: the channel list,
+// its open channel's changes and the people.
+message Rewound {
+  option (sent_by) = SERVER;
+}
+
+// A role was made, renamed, recoloured, moved or deleted, or given or taken a word; told to every signed-in session,
+// which lists the roles again where it shows them. A member whose own standing changed is told `StandingChanged` too.
+message RolesChanged {}
+
+// A category was made, last in the order; told to every signed-in session.
+message CategoryAdded {
+  // As the list shows it.
+  CategorySummary category = 1;
+  // The list's version with it (`ChannelsSummary.version`).
+  uint64 version = 2;
+}
+
+// A category was renamed; told to every signed-in session.
+message CategoryRenamed {
+  // The category, by its id.
+  string category_id = 1;
+  // Its name now.
+  string name = 2;
+  // The list's version with it (`ChannelsSummary.version`).
+  uint64 version = 3;
+}
+
+// A category was deleted, after the removal of each of its channels; told to every signed-in session.
+message CategoryRemoved {
+  // The category, by its id.
+  string category_id = 1;
+  // The list's version without it (`ChannelsSummary.version`).
+  uint64 version = 2;
+}
+
+// A category took a new place in the order; told to every signed-in session.
+message CategoryMoved {
+  // The category, by its id.
+  string category_id = 1;
+  // Its position now, as `CategorySummary.position`.
+  int64 position = 2;
+  // The list's version with it (`ChannelsSummary.version`).
+  uint64 version = 3;
+}
+
+// A channel took a new place: another category, or another position in its own; told to each session that may see
+// it. When a category runs out of room between positions its channels are numbered again, each told by one of these.
+message ChannelMoved {
+  // The channel, by its id.
+  string channel_id = 1;
+  // The category it is in now.
+  string category_id = 2;
+  // Its position now, as `ChannelSummary.position`.
+  int64 position = 3;
+  // The list's version with it (`ChannelsSummary.version`).
+  uint64 version = 4;
+}
+
+// A channel became private or stopped being (`ChannelSummary.private`); told to each session that still sees it. One
+// that gained or lost sight of it is told `StandingChanged` instead.
+message ChannelAccessChanged {
+  // The channel, by its id.
+  string channel_id = 1;
+  // As `ChannelSummary.private`, now.
+  bool private = 2;
+  // The list's version with it (`ChannelsSummary.version`).
+  uint64 version = 3;
+}

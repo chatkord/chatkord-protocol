@@ -1,0 +1,113 @@
+// How much a server and each of its channels alert one account: a level, what counts as no mention, and a mute. The
+// server keeps them for the account and tells them to its sockets alone; every device reads one rule from them
+// (`proto::notify::decide`). Each op acts only on the asking account. A device also tells the server when it has been
+// idle, and the server tells each device whether it is the one to alert (`DeviceInUse`), while the account has more
+// than one signed in.
+syntax = "proto3";
+
+package chatkord.v1;
+
+import "chatkord/v1/options.proto";
+
+// How much of a server or a channel alerts.
+enum NotifyLevel {
+  // Not said: refused where a level is asked for.
+  NOTIFY_LEVEL_UNSPECIFIED = 0;
+  // Every message.
+  ALL = 1;
+  // A mention of the account, and `@everyone`, `@here` or a role of theirs unless suppressed.
+  MENTIONS = 2;
+  // Nothing, mentions included.
+  NOTHING = 3;
+}
+
+// A mute: until a time, or until turned off.
+message Mute {
+  // Absent, the mute is `INVALID_REQUEST`.
+  oneof span {
+    // In seconds since the epoch; a time passed is no mute.
+    int64 until = 1;
+    // Until the account turns it off.
+    Forever forever = 2;
+  }
+}
+
+// `Mute.forever`: it says nothing more.
+message Forever {}
+
+// The account's settings for the server.
+message ServerNotify {
+  // Every channel's level unless the channel sets its own; `UNSPECIFIED` is `INVALID_REQUEST`.
+  NotifyLevel level = 1;
+  // `@everyone` and `@here` count as no mention.
+  bool suppress_everyone = 2;
+  // A mention of a role the account holds counts as no mention.
+  bool suppress_roles = 3;
+  // The whole server is muted; absent, it is not.
+  Mute mute = 4;
+}
+
+// The account's settings for one channel.
+message ChannelNotify {
+  // The channel, by its id; one the account does not see is `NOT_FOUND`.
+  string channel_id = 1;
+  // Its own level; absent, it follows the server's. `UNSPECIFIED` is `INVALID_REQUEST`.
+  optional NotifyLevel level = 2;
+  // The channel is muted; absent, it is not.
+  Mute mute = 3;
+}
+
+// Sets the account's settings for the server, whole, answered `Ok`; its sockets are told them (`NotifyChanged`).
+message SetServerNotify {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // Absent is `INVALID_REQUEST`.
+  ServerNotify settings = 1;
+}
+
+// Sets the account's settings for one channel, whole, under `CHANNEL_READ` there, answered `Ok`; a channel following
+// the server with no mute is kept as no setting. Its sockets are told them (`NotifyChanged`).
+message SetChannelNotify {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // Absent is `INVALID_REQUEST`.
+  ChannelNotify settings = 1;
+}
+
+// Asks for the account's settings, answered `NotifySettings`.
+message GetNotify {
+  option (sent_by) = CLIENT;
+  option (reply) = "NotifySettings";
+}
+
+// The account's settings, whole.
+message NotifySettings {
+  option (sent_by) = SERVER;
+  // The server's; absent reads as `MENTIONS` with nothing suppressed and no mute.
+  ServerNotify server = 1;
+  // Each channel the account sees that has a setting, at most one a channel; a channel left out follows the server.
+  repeated ChannelNotify channels = 2;
+}
+
+// The account's settings changed, told whole to its sockets alone.
+message NotifyChanged {
+  // As they are now.
+  NotifySettings settings = 1;
+}
+
+// This device has gone idle (no input for the limit it keeps) or active again: a tell, sent on a transition only, from
+// a lone device too. The server uses it to say which device alerts and whether the account is away; it keeps the
+// transition alone, never its time, and tells no one else.
+message Activity {
+  option (sent_by) = CLIENT;
+  // True from the moment the device is idle; false the moment input returns.
+  bool idle = 1;
+}
+
+// Whether this device alerts for the account, told to this socket alone: when it signs in, when another device of the
+// account signs in or out, and when a device's activity changes the answer. Nothing is kept; a reconnect is told afresh.
+message DeviceInUse {
+  // This device had the account's most recent input, or every device has been idle 10 minutes
+  // (`proto::notify::IDLE_EVERYWHERE`), or it is alone: `proto::notify::Moment.alerts_here`.
+  bool alerts_here = 1;
+}

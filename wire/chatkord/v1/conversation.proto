@@ -1,0 +1,68 @@
+// Conversations: private talk between members of the server, in a timeline of its own (`chat.proto`). A conversation
+// holds a list of members, two today; its members alone read it, on every path (a page, a catch-up, a file, an event).
+// It is stored in the clear on the server: the operator can read it. No role, owner or admin word reaches it
+// (`chat.proto` says which words its members hold), it has no pin, and no `@everyone`, `@here` or role span.
+syntax = "proto3";
+
+package chatkord.v1;
+
+import "chatkord/v1/options.proto";
+
+import "chatkord/v1/chat.proto";
+
+// Opens the conversation of the asker and another member, answered with it (`Conversation`); one that exists answers
+// with itself, whoever opened it. It is listed for the asker from then on, and told to the asker's sockets
+// (`ConversationOpened`); the other member is listed and told with its first message, so one nobody wrote in sits only
+// in the list of whoever opened it. The
+// asker opens at most 20 an hour (`proto::rules::MAX_CONVERSATIONS_OPENED_PER_HOUR`): one more is `RATE_LIMITED`.
+message OpenConversation {
+  option (sent_by) = CLIENT;
+  option (reply) = "Conversation";
+  // A member by `Person.user_id`, not the asker (`INVALID_REQUEST`); one who is gone, banned or unknown is
+  // `NOT_FOUND`.
+  string user_id = 1;
+}
+
+// A conversation as its member sees it.
+message Conversation {
+  option (sent_by) = SERVER;
+  // Opaque.
+  string conversation_id = 1;
+  // Its timeline, which `History`, `CatchUp`, `SendMessage` and `MarkRead` take.
+  string timeline_id = 2;
+  // Its members who are still on the server, each once, the asker among them.
+  repeated string user_ids = 3;
+  // The timeline's revision now, where a `CatchUp` starts.
+  uint64 revision = 4;
+  // The asker's standing in it.
+  TimelineStanding standing = 5;
+  // Its newest living message in brief; absent with none.
+  optional Preview last = 6;
+  // The conversation takes a message: every other member it was opened with is still on the server and not banned.
+  bool sendable = 7;
+}
+
+// Asks for the asker's conversations, answered `Conversations`.
+message ListConversations {
+  option (sent_by) = CLIENT;
+  option (reply) = "Conversations";
+}
+
+// The conversations listed for the asker (`OpenConversation`), the one with the newest message first (one with none by
+// when it was opened), at most 100
+// (`proto::rules::MAX_CONVERSATIONS_LISTED`).
+message Conversations {
+  option (sent_by) = SERVER;
+  // Each once.
+  repeated Conversation conversations = 1;
+  // More conversations exist than the list holds.
+  bool more = 2;
+}
+
+// A conversation is listed for this account now: it opened it, or the other member's first message reached it (told
+// just before that message). Told to the account's sockets, which read what they may see again first, so its messages
+// that follow are told to them.
+message ConversationOpened {
+  // The conversation, with a standing of nothing read and nothing unread.
+  Conversation conversation = 1;
+}

@@ -1,0 +1,18 @@
+[package]
+name = "report-derive"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "#[derive(Public)]: an enum's variant is a public word by its name"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+# Both are in every lock already (prost-derive and the other derives ask for them); only the derive and parsing
+# halves of syn are used, at the latest published release.
+quote = "1.0.47"
+syn = { version = "3.0.9", default-features = false, features = ["derive", "parsing", "printing", "proc-macro"] }
+
+[lints]
+workspace = true

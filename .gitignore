@@ -1,0 +1,11 @@
+target/
+build/
+*.log
+__pycache__/
+.DS_Store
+# Private notes, LAB.local.md among them: real hosts and devices never leave this machine.
+*.local.md
+.venv/
+# cargo-fuzz's working corpus, kept per machine (fuzz/seeds is the tracked one).
+/fuzz/corpus/
+/fuzz/artifacts/

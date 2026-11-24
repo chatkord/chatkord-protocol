@@ -1,0 +1,18 @@
+# The git hooks (`mise run hooks` installs them; README.md#the-gate). Each refuses with the rule it broke.
+pre-commit:
+  commands:
+    # What is committed, which the tree's checks below cannot tell from what is not.
+    privacy:
+      run: bash scripts/privacy/run.sh --staged
+    fast:
+      run: mise run gate:fast
+# The tip of each ref pushed passed the gate whole (scripts/gate/record.py).
+pre-push:
+  commands:
+    gated:
+      use_stdin: true
+      run: bash scripts/gate/pushed.sh
+commit-msg:
+  commands:
+    subject:
+      run: bash scripts/hooks/commit-msg.sh {1}

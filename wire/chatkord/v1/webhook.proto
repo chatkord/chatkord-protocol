@@ -1,0 +1,83 @@
+// Incoming webhooks: a webhook is a secret URL a program posts to, and its post is a message of an app
+// in one channel (`Message.app`). Making, listing, regenerating and deleting one is under `MANAGE_WEBHOOKS`, a
+// server-level word; making one also needs the maker to see the channel. The URL itself is built by the client from the
+// server's address and the secret, which is shown once, when the webhook is made or regenerated; the server keeps
+// only a digest. A server holds at most 15 webhooks in a channel, past which making one is `INVALID_REQUEST`.
+syntax = "proto3";
+
+package chatkord.v1;
+
+import "chatkord/v1/options.proto";
+
+// One webhook, without its secret.
+message Webhook {
+  // Opaque; the regenerate and delete ops take it.
+  string webhook_id = 1;
+  // The channel it posts in, as `ChannelSummary.channel_id`; deleting the channel deletes its webhooks.
+  string channel_id = 2;
+  // The name it posts under unless a post names its own, and the one `App.webhook_name` carries: trimmed, 1 to 64
+  // printable characters with no control or text-direction character.
+  string name = 3;
+  // Whether its posts may name `@everyone` and `@here`; made so only by a maker who holds `MENTION_EVERYONE`.
+  bool mention_everyone = 4;
+  // The member who made it; absent once that account is gone.
+  optional string made_by = 5;
+  // When it was made, in seconds since the epoch.
+  int64 created_at = 6;
+}
+
+// Makes a webhook in a text channel, under `MANAGE_WEBHOOKS`, answered `WebhookMade`. A channel the asker does not see
+// and a voice channel are the same `NOT_FOUND`; `mention_everyone` without the asker holding `MENTION_EVERYONE` is `NOT_AUTHORIZED`; a name past its
+// bounds is `INVALID_REQUEST`, as is a sixteenth webhook in the channel.
+message CreateWebhook {
+  option (sent_by) = CLIENT;
+  option (reply) = "WebhookMade";
+  // As `ChannelSummary.channel_id`.
+  string channel_id = 1;
+  // As `Webhook.name`.
+  string name = 2;
+  // As `Webhook.mention_everyone`.
+  bool mention_everyone = 3;
+}
+
+// A webhook, with the secret its URL carries. Shown this once: the server keeps a digest, so a lost secret is
+// regenerated, never read again.
+message WebhookMade {
+  option (sent_by) = SERVER;
+  // As it is now.
+  Webhook webhook = 1;
+  // The token the URL ends with (`/v1/webhooks/<token>`).
+  string token = 2 [(secret) = true];
+}
+
+// Asks for the server's webhooks in the channels the asker sees, under `MANAGE_WEBHOOKS`: answered `Webhooks`.
+message ListWebhooks {
+  option (sent_by) = CLIENT;
+  option (reply) = "Webhooks";
+}
+
+// The server's webhooks in the channels the asker sees, oldest first, without their secrets; the server keeps at most
+// 15 for each channel.
+message Webhooks {
+  option (sent_by) = SERVER;
+  // Each once.
+  repeated Webhook webhooks = 1;
+}
+
+// Gives a webhook a new secret, under `MANAGE_WEBHOOKS`, answered `WebhookMade`: the old URL stops working at once.
+// An id nobody holds, or one in a channel the asker does not see, is `NOT_FOUND`.
+message RegenerateWebhook {
+  option (sent_by) = CLIENT;
+  option (reply) = "WebhookMade";
+  // As `Webhook.webhook_id`.
+  string webhook_id = 1;
+}
+
+// Deletes a webhook, under `MANAGE_WEBHOOKS`, answered `Ok`: its URL stops working, and the posts it made stay under
+// the names they were made with. An id nobody holds, or one in a channel the asker does not see, is `NOT_FOUND`.
+message DeleteWebhook {
+  option (sent_by) = CLIENT;
+  option (reply) = "Ok";
+  // As `Webhook.webhook_id`.
+  string webhook_id = 1;
+}
