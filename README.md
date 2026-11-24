@@ -38,7 +38,9 @@ repository are the apps' too, and each app's gate holds its copies equal; an app
   the pre-push hook refuses a tip with none.
 - `mise run fuzz [TARGET] [SECONDS]` fuzzes `frame_from_server` on Linux; the gate replays its seeds in `proto`'s tests.
 
-CI runs `mise run gate` on Linux and Windows for every pull request.
+CI runs `mise run gate` on Linux and Windows for every pull request. `.github/rulesets/` is what GitHub enforces
+(`gh api -X POST repos/<owner>/<repo>/rulesets --input <file>`): `main` changes only by a merge commit of a pull
+request both gate jobs passed, and neither `main` nor `develop` is ever rewritten or deleted.
 
 ## Privacy guard
 
