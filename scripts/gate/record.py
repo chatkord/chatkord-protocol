@@ -4,7 +4,7 @@ choice and what it stood on is whole on the same system; what its system cannot 
 
 Usage: record.py write TREE SYSTEM BASE [LEFT...]   (BASE is a tree, or - for none)
        record.py base SYSTEM                        (the nearest commit on HEAD's line whose tree passed whole here)
-       record.py push                               (git's pre-push lines on stdin; refuses a tip that did not)
+       record.py push                               (git's pre-push lines on stdin; refuses a tip for main that did not)
        record.py --self-test
 """
 import json
@@ -32,6 +32,8 @@ def cannot_run(tree=Path(".")):
 
 
 ZERO = "0" * 40
+# The refs a push must have a whole pass for: what reaches main is gated, and develop moves without it.
+GATED = ("refs/heads/main",)
 
 
 def read(tree, folder=PASSED):
@@ -79,13 +81,13 @@ def base(system):
 
 
 def push(lines, records, tree_of):
-    """The refusals for git's pre-push `lines`, and what each whole tip's system could not run."""
+    """The refusals for git's pre-push `lines` to a gated ref, and what each whole tip's system could not run."""
     refused, said = [], []
     for line in lines:
         fields = line.split()
-        if len(fields) != 4 or fields[1] == ZERO:
+        if len(fields) != 4 or fields[1] == ZERO or fields[2] not in GATED:
             continue
-        ref, tree = fields[0], tree_of(fields[1])
+        ref, tree = fields[2], tree_of(fields[1])
         record = records(tree)
         if not whole(tree, records):
             left = "; left out: " + ", ".join(record["left_out"]) if record and record.get("left_out") else ""
@@ -118,10 +120,17 @@ def self_test():
         "another system's pass is no base here": not whole("full", records.get, "windows"),
         "no record is not": not whole("none", records.get),
     }
-    refused, said = push([f"refs/heads/a {'1' * 40} refs/heads/a {ZERO}", f"refs/heads/b {'2' * 40} refs/heads/b {ZERO}",
-                          f"(delete) {ZERO} refs/heads/c {'3' * 40}"], records.get, {"1" * 40: "chained", "2" * 40: "gap"}.get)
-    cases["a push refuses the tip that did not pass whole and says the other"] = (
-        len(refused) == 1 and refused[0].startswith("refs/heads/b") and "profile ci" in refused[0] and len(said) == 1)
+    trees = {"1" * 40: "chained", "2" * 40: "gap", "3" * 40: "none"}.get
+    refused, said = push([f"refs/heads/main {'1' * 40} refs/heads/main {ZERO}"], records.get, trees)
+    cases["a push of main whose tip passed whole goes, and says where"] = not refused and len(said) == 1
+    refused, said = push([f"refs/heads/main {'2' * 40} refs/heads/main {ZERO}"], records.get, trees)
+    cases["a push of main whose tip did not pass whole is refused"] = (
+        len(refused) == 1 and refused[0].startswith("refs/heads/main") and "profile ci" in refused[0] and not said)
+    refused, said = push([f"HEAD {'3' * 40} refs/heads/main {ZERO}"], records.get, trees)
+    cases["a push to main from any local ref is checked"] = len(refused) == 1
+    refused, said = push([f"refs/heads/develop {'3' * 40} refs/heads/develop {ZERO}", f"refs/heads/main {'3' * 40} refs/heads/topic {ZERO}",
+                          f"(delete) {ZERO} refs/heads/main {'3' * 40}"], records.get, trees)
+    cases["a push of develop or another branch, or a deletion, asks for no pass"] = not refused and not said
     with tempfile.TemporaryDirectory() as scratch:
         (Path(scratch) / CANNOT_RUN_FILE).parent.mkdir(parents=True)
         (Path(scratch) / CANNOT_RUN_FILE).write_text('[systems]\nlinux = ["a"]\n', encoding="utf-8")

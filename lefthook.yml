@@ -6,7 +6,7 @@ pre-commit:
       run: bash scripts/privacy/run.sh --staged
     fast:
       run: mise run gate:fast
-# The tip of each ref pushed passed the gate whole (scripts/gate/record.py).
+# A push to main only of a tip that passed the gate whole (scripts/gate/record.py).
 pre-push:
   commands:
     gated:

@@ -1,4 +1,4 @@
-# The gate (README.md#the-gate): `mise run gate` before every push, `mise run gate:fast` before every commit.
+# The gate (README.md#the-gate): `mise run gate` on demand and before main, `mise run gate:fast` before every commit.
 # Each task is one bash script (Git Bash on Windows) under scripts/gate, so the same line runs under sh and cmd.
 ["gate:fast"]
 description = "The git hooks, the privacy guard, formatting, the schema, the generated types, links, the lints, dependencies and the gate's own rules"

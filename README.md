@@ -33,9 +33,10 @@ repository are the apps' too, and each app's gate holds its copies equal; an app
   `buf breaking` against the commit that opened the current major and the latest `v*` release tag, a break passing only
   with a new major listed in `wire/MAJORS`), the generated types compared with `wire/`, links, the lint table,
   `cargo deny` over the lock, and the gate's own self-tests.
-- `mise run gate` before a push: those, then clippy, `cargo nextest run`, `cargo doc` with warnings denied, and the lints
-  of the fuzz target (Linux). A pass on a clean tree is recorded (`build/gate/passed/`, `scripts/gate/record.py`), and
-  the pre-push hook refuses a tip with none.
+- `mise run gate` on demand, and before anything reaches `main`: those, then clippy, `cargo nextest run`, `cargo doc`
+  with warnings denied, and the lints of the fuzz target (Linux). A pass on a clean tree is recorded
+  (`build/gate/passed/`, `scripts/gate/record.py`), and the pre-push hook refuses a push to `main` whose tip has none;
+  `develop` and other branches are pushed without one.
 - `mise run fuzz [TARGET] [SECONDS]` fuzzes `frame_from_server` on Linux; the gate replays its seeds in `proto`'s tests.
 
 CI runs `mise run gate` on Linux and Windows for every pull request. `.github/rulesets/` is what GitHub enforces

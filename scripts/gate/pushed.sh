@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The pre-push hook: git's lines on stdin, refused unless the tip of each ref passed the gate whole.
+# The pre-push hook: git's lines on stdin, a push to main refused unless its tip passed the gate whole.
 set -euo pipefail
 TOOLS="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$(git rev-parse --show-toplevel)"
